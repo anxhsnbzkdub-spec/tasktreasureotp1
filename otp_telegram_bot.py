@@ -71,11 +71,16 @@ def start_health_server():
     """Start simple health check server"""
     try:
         port = int(os.environ.get('PORT', 8080))
+        logger.info(f"🌐 Starting health server on 0.0.0.0:{port}")
+        
         server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        logger.info(f"Health server started on port {port}")
+        logger.info(f"✅ Health server READY on port {port}")
+        
+        # This will block and serve forever
         server.serve_forever()
     except Exception as e:
-        logger.error(f"Health server failed: {e}")
+        logger.error(f"❌ Health server failed: {e}")
+        raise
 
 class OTPTelegramBot:
     def __init__(self):
@@ -831,15 +836,29 @@ Powered by @tasktreasur\\_support"""
             if self.playwright:
                 await self.playwright.stop()
 
-async def main():
-    # Start health check server in background thread
+def main():
+    """Main function - start HTTP server first, then bot"""
+    logger.info("🚀 OTP Telegram Bot starting...")
+    
+    # CRITICAL: Start HTTP server FIRST for Render port binding
+    logger.info("📡 Starting health check server for Render...")
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
-    logger.info("Started health check server")
     
-    # Start the bot
-    bot = OTPTelegramBot()
-    await bot.run_monitoring_loop()
+    # Give server a moment to bind to port
+    import time
+    time.sleep(1)
+    logger.info("✅ Health server thread started")
+    
+    # Now start bot in async context
+    logger.info("🤖 Starting bot monitoring...")
+    
+    async def bot_main():
+        bot = OTPTelegramBot()
+        await bot.run_monitoring_loop()
+    
+    # Run the bot
+    asyncio.run(bot_main())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
