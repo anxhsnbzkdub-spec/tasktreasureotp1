@@ -83,12 +83,14 @@ class OTPTelegramBot:
         
         # Set Chrome binary path if available
         chrome_binary_paths = [
-            '/usr/bin/chromium-browser',      # Render Aptfile install
-            '/usr/bin/chromium',              # Alternative Chromium path
+            '/usr/bin/chromium',              # Render Aptfile install (primary)
+            '/usr/bin/chromium-browser',      # Alternative Chromium
             '/usr/bin/google-chrome',         # Google Chrome
             '/usr/bin/google-chrome-stable',  # Google Chrome stable
+            '/snap/bin/chromium',             # Snap install
+            '/app/.apt/usr/bin/chromium',     # Heroku Chromium
+            '/app/.apt/usr/bin/chromium-browser', # Heroku Chromium alt
             '/app/.apt/usr/bin/google-chrome', # Heroku buildpack
-            '/app/.apt/usr/bin/chromium-browser', # Heroku Chromium
             os.environ.get('GOOGLE_CHROME_BIN', ''),
             os.environ.get('CHROME_BIN', ''),
         ]
@@ -127,9 +129,11 @@ class OTPTelegramBot:
         try:
             # Check for various ChromeDriver locations
             chromedriver_paths = [
-                '/usr/bin/chromedriver',              # Aptfile install (Render)
-                '/usr/bin/chromium-chromedriver',     # Chromium driver
+                '/usr/bin/chromedriver',              # Standard install
+                '/usr/bin/chromium-driver',           # Aptfile install (Render)
+                '/usr/bin/chromium-chromedriver',     # Alternative name
                 '/usr/local/bin/chromedriver',        # Docker
+                '/snap/bin/chromium.chromedriver',    # Snap install
                 '/app/.chromedriver/bin/chromedriver', # Heroku/Render buildpack
                 os.environ.get('CHROMEDRIVER_PATH', ''), # Environment variable
             ]
@@ -178,15 +182,35 @@ class OTPTelegramBot:
                 logger.error(f"System Chrome failed: {e2}")
                 logger.error(f"Chrome binary location: {getattr(chrome_options, 'binary_location', 'Not set')}")
                 
-                # Final fallback - try to use chromium directly
-                try:
-                    logger.info("Final fallback: trying chromium-browser directly...")
-                    chrome_options.binary_location = '/usr/bin/chromium-browser'
-                    self.driver = webdriver.Chrome(options=chrome_options)
-                    logger.info("Chromium fallback successful")
-                except Exception as e3:
-                    logger.error(f"All Chrome setup methods failed: {e3}")
-                    raise Exception(f"Could not setup Chrome driver: {e3}")
+                # Final fallback - try multiple chromium paths
+                fallback_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium']
+                fallback_success = False
+                
+                for fallback_path in fallback_paths:
+                    try:
+                        logger.info(f"Final fallback: trying {fallback_path} directly...")
+                        chrome_options.binary_location = fallback_path
+                        self.driver = webdriver.Chrome(options=chrome_options)
+                        logger.info(f"Chromium fallback successful with {fallback_path}")
+                        fallback_success = True
+                        break
+                    except Exception as e3:
+                        logger.warning(f"Fallback with {fallback_path} failed: {e3}")
+                        continue
+                
+                if not fallback_success:
+                    logger.error("All Chrome setup methods failed")
+                    # Try one last time with minimal options
+                    try:
+                        logger.info("Last resort: minimal Chrome options...")
+                        minimal_options = Options()
+                        minimal_options.add_argument("--headless")
+                        minimal_options.add_argument("--no-sandbox")
+                        minimal_options.add_argument("--disable-dev-shm-usage")
+                        self.driver = webdriver.Chrome(options=minimal_options)
+                        logger.info("Minimal Chrome setup successful")
+                    except Exception as final_error:
+                        raise Exception(f"Could not setup Chrome driver with any method: {final_error}")
         
         return self.driver
     
@@ -233,36 +257,70 @@ class OTPTelegramBot:
             
             # Handle SSL certificate warning if present
             try:
-                # Look for "Advanced" button or "Proceed to site" option
-                advanced_button = None
-                proceed_link = None
-                
-                try:
-                    advanced_button = self.driver.find_element(By.ID, "details-button")
-                except:
-                    try:
-                        advanced_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Advanced')]")
-                    except:
-                        pass
-                
-                if advanced_button:
-                    logger.info("Found SSL warning, clicking Advanced...")
-                    advanced_button.click()
-                    time.sleep(2)
+                # Check if we're on SSL warning page
+                if "not secure" in self.driver.title.lower() or "privacy error" in self.driver.page_source.lower():
+                    logger.info("Detected SSL warning page, attempting to bypass...")
                     
-                    try:
-                        proceed_link = self.driver.find_element(By.ID, "proceed-link")
-                    except:
-                        try:
-                            proceed_link = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Proceed') or contains(text(), 'unsafe')]")
-                        except:
-                            pass
+                    # Multiple strategies to bypass SSL warning
+                    bypassed = False
                     
-                    if proceed_link:
-                        logger.info("Clicking proceed to unsafe site...")
-                        proceed_link.click()
-                        time.sleep(3)
+                    # Strategy 1: Click Advanced button then Proceed link
+                    try:
+                        # Try multiple selectors for Advanced button
+                        advanced_selectors = [
+                            (By.ID, "details-button"),
+                            (By.XPATH, "//button[contains(text(), 'Advanced')]"),
+                            (By.XPATH, "//span[contains(text(), 'Advanced')]//parent::button"),
+                            (By.CSS_SELECTOR, "#details-button"),
+                            (By.CSS_SELECTOR, "button[id*='details']"),
+                        ]
                         
+                        for selector_type, selector_value in advanced_selectors:
+                            try:
+                                advanced_button = self.driver.find_element(selector_type, selector_value)
+                                if advanced_button.is_displayed() and advanced_button.is_enabled():
+                                    logger.info(f"Clicking Advanced button using {selector_type}")
+                                    self.driver.execute_script("arguments[0].click();", advanced_button)
+                                    time.sleep(2)
+                                    break
+                            except:
+                                continue
+                        
+                        # Try to find and click proceed link
+                        proceed_selectors = [
+                            (By.ID, "proceed-link"),
+                            (By.XPATH, "//a[contains(text(), 'Proceed')]"),
+                            (By.XPATH, "//a[contains(text(), 'unsafe')]"),
+                            (By.XPATH, "//a[contains(@href, 'unsafe')]"),
+                            (By.CSS_SELECTOR, "#proceed-link"),
+                            (By.CSS_SELECTOR, "a[id*='proceed']"),
+                        ]
+                        
+                        for selector_type, selector_value in proceed_selectors:
+                            try:
+                                proceed_link = self.driver.find_element(selector_type, selector_value)
+                                if proceed_link.is_displayed() and proceed_link.is_enabled():
+                                    logger.info(f"Clicking proceed link using {selector_type}")
+                                    self.driver.execute_script("arguments[0].click();", proceed_link)
+                                    time.sleep(3)
+                                    bypassed = True
+                                    break
+                            except:
+                                continue
+                                
+                    except Exception as e:
+                        logger.warning(f"Advanced/Proceed method failed: {e}")
+                    
+                    # Strategy 2: Try direct navigation if button click failed
+                    if not bypassed:
+                        logger.info("Direct SSL bypass failed, trying to reload with --allow-running-insecure-content")
+                        try:
+                            # Force navigate directly to the URL again
+                            self.driver.get(self.login_url)
+                            time.sleep(3)
+                        except Exception as e:
+                            logger.warning(f"Direct navigation failed: {e}")
+                            
             except Exception as ssl_error:
                 logger.warning(f"SSL handling failed: {ssl_error}")
             
