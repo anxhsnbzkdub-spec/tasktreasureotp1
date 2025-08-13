@@ -40,19 +40,20 @@ class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/":
             self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
-            self.wfile.write(b"""
+            html_content = f"""
             <html>
             <head><title>OTP Telegram Bot</title></head>
             <body>
                 <h1>🤖 OTP Telegram Bot</h1>
                 <p>✅ Bot is running successfully!</p>
                 <p>📡 Monitoring for OTP messages...</p>
-                <p>🕐 Last check: """ + str(datetime.now()).encode() + b"""</p>
+                <p>🕐 Last check: {datetime.now()}</p>
             </body>
             </html>
-            """)
+            """
+            self.wfile.write(html_content.encode('utf-8'))
         elif self.path == "/health":
             self.send_response(200)
             self.send_header('Content-type', 'text/plain')
