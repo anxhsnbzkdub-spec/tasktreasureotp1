@@ -105,8 +105,9 @@ class OTPTelegramBot:
                     service = Service(chromedriver_path)
                     self.driver = webdriver.Chrome(service=service, options=chrome_options)
                     return self.driver
-            elif os.path.exists('./chromedriver.exe') and platform.system() == 'Windows':
-                # Local Windows environment
+            
+            # Check for local Windows chromedriver.exe
+            if os.path.exists('./chromedriver.exe') and platform.system() == 'Windows':
                 logger.info("Using local Windows chromedriver")
                 service = Service('./chromedriver.exe')
                 self.driver = webdriver.Chrome(service=service, options=chrome_options)

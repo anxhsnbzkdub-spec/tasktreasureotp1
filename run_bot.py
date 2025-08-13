@@ -10,13 +10,18 @@ import os
 # Add current directory to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from otp_telegram_bot import main
+import asyncio
+from otp_telegram_bot import OTPTelegramBot
+
+async def main():
+    bot = OTPTelegramBot()
+    await bot.run_monitoring_loop()
 
 if __name__ == "__main__":
     print("🤖 Starting OTP Telegram Bot...")
     print("Press Ctrl+C to stop the bot")
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
     except Exception as e:
