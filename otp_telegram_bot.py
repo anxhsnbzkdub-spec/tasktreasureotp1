@@ -9,6 +9,8 @@ import asyncio
 import logging
 import time
 import re
+import os
+import platform
 from datetime import datetime
 from typing import Set, Dict, Any
 import json
@@ -21,7 +23,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 import telegram
 from telegram.constants import ParseMode
 
@@ -87,10 +88,6 @@ class OTPTelegramBot:
                 break
         
         try:
-            # Check if running in Docker/Cloud environment
-            import os
-            import platform
-            
             # Check for various ChromeDriver locations
             chromedriver_paths = [
                 '/usr/local/bin/chromedriver',  # Docker
@@ -117,8 +114,8 @@ class OTPTelegramBot:
         
         try:
             # Try ChromeDriverManager as fallback
-            from webdriver_manager.chrome import ChromeDriverManager
             logger.info("Trying ChromeDriverManager...")
+            from webdriver_manager.chrome import ChromeDriverManager
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
         except Exception as e:
