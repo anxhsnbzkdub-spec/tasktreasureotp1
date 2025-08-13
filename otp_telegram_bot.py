@@ -93,11 +93,36 @@ class OTPTelegramBot:
             os.environ.get('CHROME_BIN', ''),
         ]
         
+        # Debug: Check which Chrome binaries exist
+        logger.info("Checking for Chrome binaries...")
         for chrome_path in chrome_binary_paths:
-            if chrome_path and os.path.exists(chrome_path):
-                chrome_options.binary_location = chrome_path
-                logger.info(f"Using Chrome binary at: {chrome_path}")
-                break
+            if chrome_path:
+                exists = os.path.exists(chrome_path)
+                logger.info(f"Chrome binary {chrome_path}: {'EXISTS' if exists else 'NOT FOUND'}")
+                if exists:
+                    chrome_options.binary_location = chrome_path
+                    logger.info(f"Using Chrome binary at: {chrome_path}")
+                    break
+        
+        # If no binary found, try to detect system Chrome
+        if not hasattr(chrome_options, 'binary_location') or not chrome_options.binary_location:
+            logger.warning("No Chrome binary found in standard locations, trying system detection...")
+            try:
+                import subprocess
+                # Try to find chromium via which command
+                result = subprocess.run(['which', 'chromium-browser'], capture_output=True, text=True)
+                if result.returncode == 0:
+                    chromium_path = result.stdout.strip()
+                    logger.info(f"Found chromium via 'which': {chromium_path}")
+                    chrome_options.binary_location = chromium_path
+                else:
+                    result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        chromium_path = result.stdout.strip()
+                        logger.info(f"Found chromium via 'which': {chromium_path}")
+                        chrome_options.binary_location = chromium_path
+            except Exception as e:
+                logger.warning(f"System Chrome detection failed: {e}")
         
         try:
             # Check for various ChromeDriver locations
@@ -109,12 +134,17 @@ class OTPTelegramBot:
                 os.environ.get('CHROMEDRIVER_PATH', ''), # Environment variable
             ]
             
+            # Debug: Check which ChromeDriver binaries exist
+            logger.info("Checking for ChromeDriver binaries...")
             for chromedriver_path in chromedriver_paths:
-                if chromedriver_path and os.path.exists(chromedriver_path):
-                    logger.info(f"Using chromedriver at: {chromedriver_path}")
-                    service = Service(chromedriver_path)
-                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                    return self.driver
+                if chromedriver_path:
+                    exists = os.path.exists(chromedriver_path)
+                    logger.info(f"ChromeDriver {chromedriver_path}: {'EXISTS' if exists else 'NOT FOUND'}")
+                    if exists:
+                        logger.info(f"Using chromedriver at: {chromedriver_path}")
+                        service = Service(chromedriver_path)
+                        self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                        return self.driver
             
             # Check for local Windows chromedriver.exe
             if os.path.exists('./chromedriver.exe') and platform.system() == 'Windows':
@@ -129,16 +159,34 @@ class OTPTelegramBot:
             # Try ChromeDriverManager as fallback
             logger.info("Trying ChromeDriverManager...")
             from webdriver_manager.chrome import ChromeDriverManager
+            
+            # Force ChromeDriverManager to use specific Chrome version if we have binary location
+            if hasattr(chrome_options, 'binary_location') and chrome_options.binary_location:
+                logger.info(f"Setting Chrome binary for WebDriverManager: {chrome_options.binary_location}")
+            
             service = Service(ChromeDriverManager().install())
             self.driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.info("ChromeDriverManager setup successful")
         except Exception as e:
-            logger.warning(f"ChromeDriverManager failed: {e}, trying system Chrome...")
+            logger.warning(f"ChromeDriverManager failed: {e}")
+            logger.info("Trying system Chrome without explicit driver path...")
             try:
-                # Fallback to system Chrome
+                # Fallback to system Chrome - let Chrome find its own driver
                 self.driver = webdriver.Chrome(options=chrome_options)
+                logger.info("System Chrome setup successful")
             except Exception as e2:
                 logger.error(f"System Chrome failed: {e2}")
-                raise Exception(f"Could not setup Chrome driver: {e2}")
+                logger.error(f"Chrome binary location: {getattr(chrome_options, 'binary_location', 'Not set')}")
+                
+                # Final fallback - try to use chromium directly
+                try:
+                    logger.info("Final fallback: trying chromium-browser directly...")
+                    chrome_options.binary_location = '/usr/bin/chromium-browser'
+                    self.driver = webdriver.Chrome(options=chrome_options)
+                    logger.info("Chromium fallback successful")
+                except Exception as e3:
+                    logger.error(f"All Chrome setup methods failed: {e3}")
+                    raise Exception(f"Could not setup Chrome driver: {e3}")
         
         return self.driver
     

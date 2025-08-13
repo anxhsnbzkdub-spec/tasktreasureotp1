@@ -1,2 +1,5 @@
 chromium-browser
 chromium-chromedriver
+chromium-l10n
+chromium-codecs-ffmpeg
+xvfb
