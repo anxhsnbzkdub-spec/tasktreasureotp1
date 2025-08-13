@@ -14,6 +14,8 @@ import hashlib
 from datetime import datetime
 from typing import Set, Dict, Any
 import json
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import requests
 from playwright.async_api import async_playwright
@@ -31,6 +33,48 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+class HealthHandler(BaseHTTPRequestHandler):
+    """Simple health check HTTP handler"""
+    
+    def do_GET(self):
+        if self.path == "/":
+            self.send_response(200)
+            self.send_header('Content-type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b"""
+            <html>
+            <head><title>OTP Telegram Bot</title></head>
+            <body>
+                <h1>🤖 OTP Telegram Bot</h1>
+                <p>✅ Bot is running successfully!</p>
+                <p>📡 Monitoring for OTP messages...</p>
+                <p>🕐 Last check: """ + str(datetime.now()).encode() + b"""</p>
+            </body>
+            </html>
+            """)
+        elif self.path == "/health":
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+    
+    def log_message(self, format, *args):
+        # Suppress default HTTP server logs
+        pass
+
+def start_health_server():
+    """Start simple health check server"""
+    try:
+        port = int(os.environ.get('PORT', 8080))
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        logger.info(f"Health server started on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"Health server failed: {e}")
 
 class OTPTelegramBot:
     def __init__(self):
@@ -787,6 +831,12 @@ Powered by @tasktreasur\\_support"""
                 await self.playwright.stop()
 
 async def main():
+    # Start health check server in background thread
+    health_thread = threading.Thread(target=start_health_server, daemon=True)
+    health_thread.start()
+    logger.info("Started health check server")
+    
+    # Start the bot
     bot = OTPTelegramBot()
     await bot.run_monitoring_loop()
 
