@@ -6,10 +6,11 @@
 1. `otp_telegram_bot.py` - মূল বট কোড
 2. `run_bot.py` - বট রানার স্ক্রিপ্ট  
 3. `requirements.txt` - Python dependencies
-4. `Dockerfile` - Docker কনফিগারেশন
-5. `render.yaml` - Render deploy কনফিগ
-6. `README.md` - প্রোজেক্ট ডকুমেন্টেশন
-7. `.gitignore` - Git ignore rules
+4. `render.yaml` - Render deploy কনফিগ
+5. `runtime.txt` - Python version specification
+6. `Aptfile` - Chrome installation for Render
+7. `README.md` - প্রোজেক্ট ডকুমেন্টেশন
+8. `.gitignore` - Git ignore rules
 
 ### ❌ **Upload করবেন না:**
 - `chromedriver.exe` (শুধু লোকাল ডেভেলপমেন্টের জন্য)
@@ -53,11 +54,11 @@ git push -u origin main
 
 ### Step 3: Configuration
 - **Name:** `otp-telegram-bot`
-- **Environment:** `Docker`
+- **Environment:** `Python`
 - **Region:** `Oregon (US West)`
 - **Branch:** `main`
-- **Build Command:** (খালি রাখুন)
-- **Start Command:** (খালি রাখুন - Dockerfile ব্যবহার করবে)
+- **Build Command:** `pip install -r requirements.txt`
+- **Start Command:** `python run_bot.py`
 
 ### Step 4: Environment Variables (প্রয়োজন নেই)
 বট কোডে সব credentials hardcoded আছে, তাই কোন environment variables সেট করার দরকার নেই।

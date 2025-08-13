@@ -67,19 +67,44 @@ class OTPTelegramBot:
         chrome_options.add_argument("--disable-web-security")
         chrome_options.add_argument("--allow-running-insecure-content")
         chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-renderer-backgrounding")
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        
+        # Set Chrome binary path if available
+        chrome_binary_paths = [
+            '/usr/bin/google-chrome',
+            '/usr/bin/google-chrome-stable', 
+            '/app/.apt/usr/bin/google-chrome',
+            os.environ.get('GOOGLE_CHROME_BIN', ''),
+        ]
+        
+        for chrome_path in chrome_binary_paths:
+            if chrome_path and os.path.exists(chrome_path):
+                chrome_options.binary_location = chrome_path
+                logger.info(f"Using Chrome binary at: {chrome_path}")
+                break
         
         try:
             # Check if running in Docker/Cloud environment
             import os
             import platform
             
-            if os.path.exists('/usr/local/bin/chromedriver'):
-                # Docker environment
-                logger.info("Using Docker chromedriver")
-                service = Service('/usr/local/bin/chromedriver')
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                return self.driver
+            # Check for various ChromeDriver locations
+            chromedriver_paths = [
+                '/usr/local/bin/chromedriver',  # Docker
+                '/usr/bin/chromedriver',        # System install
+                '/app/.chromedriver/bin/chromedriver',  # Heroku/Render buildpack
+                os.environ.get('CHROMEDRIVER_PATH', ''),  # Environment variable
+            ]
+            
+            for chromedriver_path in chromedriver_paths:
+                if chromedriver_path and os.path.exists(chromedriver_path):
+                    logger.info(f"Using chromedriver at: {chromedriver_path}")
+                    service = Service(chromedriver_path)
+                    self.driver = webdriver.Chrome(service=service, options=chrome_options)
+                    return self.driver
             elif os.path.exists('./chromedriver.exe') and platform.system() == 'Windows':
                 # Local Windows environment
                 logger.info("Using local Windows chromedriver")
