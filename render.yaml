@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: otp-telegram-bot
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: oregon
+    branch: main
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: TZ
+        value: UTC
+    scaling:
+      minInstances: 1
+      maxInstances: 1
