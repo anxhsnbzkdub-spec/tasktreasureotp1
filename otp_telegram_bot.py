@@ -65,8 +65,6 @@ class OTPTelegramBot:
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-web-security")
-        chrome_options.add_argument("--allow-running-insecure-content")
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-background-timer-throttling")
         chrome_options.add_argument("--disable-backgrounding-occluded-windows")
@@ -75,6 +73,12 @@ class OTPTelegramBot:
         chrome_options.add_argument("--disable-features=VizDisplayCompositor")
         chrome_options.add_argument("--single-process")
         chrome_options.add_argument("--disable-setuid-sandbox")
+        chrome_options.add_argument("--ignore-certificate-errors")
+        chrome_options.add_argument("--ignore-ssl-errors")
+        chrome_options.add_argument("--ignore-certificate-errors-spki-list")
+        chrome_options.add_argument("--ignore-certificate-errors-invalid-ca")
+        chrome_options.add_argument("--allow-running-insecure-content")
+        chrome_options.add_argument("--disable-web-security")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
         
         # Set Chrome binary path if available
@@ -176,36 +180,108 @@ class OTPTelegramBot:
             logger.info("Starting login process...")
             self.driver.get(self.login_url)
             
-            # Wait for page to load
-            time.sleep(3)
+            # Wait longer for SSL warning page to load
+            time.sleep(5)
+            
+            # Handle SSL certificate warning if present
+            try:
+                # Look for "Advanced" button or "Proceed to site" option
+                advanced_button = None
+                proceed_link = None
+                
+                try:
+                    advanced_button = self.driver.find_element(By.ID, "details-button")
+                except:
+                    try:
+                        advanced_button = self.driver.find_element(By.XPATH, "//button[contains(text(), 'Advanced')]")
+                    except:
+                        pass
+                
+                if advanced_button:
+                    logger.info("Found SSL warning, clicking Advanced...")
+                    advanced_button.click()
+                    time.sleep(2)
+                    
+                    try:
+                        proceed_link = self.driver.find_element(By.ID, "proceed-link")
+                    except:
+                        try:
+                            proceed_link = self.driver.find_element(By.XPATH, "//a[contains(text(), 'Proceed') or contains(text(), 'unsafe')]")
+                        except:
+                            pass
+                    
+                    if proceed_link:
+                        logger.info("Clicking proceed to unsafe site...")
+                        proceed_link.click()
+                        time.sleep(3)
+                        
+            except Exception as ssl_error:
+                logger.warning(f"SSL handling failed: {ssl_error}")
+            
+            # Wait for actual login page to load
+            WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
             
             # Get page source for debugging
             page_source = self.driver.page_source
             logger.info(f"Page title: {self.driver.title}")
+            logger.info(f"Current URL: {self.driver.current_url}")
             
-            # Find username field (confirmed from interactive test)
-            try:
-                username_field = self.driver.find_element(By.NAME, "username")
-                logger.info("Found username field")
-            except Exception as e:
-                logger.error(f"Could not find username field: {e}")
+            # Find username field with multiple strategies
+            username_field = None
+            username_selectors = [
+                (By.NAME, "username"),
+                (By.ID, "username"),
+                (By.XPATH, "//input[@type='text']"),
+                (By.XPATH, "//input[contains(@name, 'user')]"),
+                (By.CSS_SELECTOR, "input[name='username']"),
+            ]
+            
+            for selector_type, selector_value in username_selectors:
+                try:
+                    username_field = self.driver.find_element(selector_type, selector_value)
+                    logger.info(f"Found username field using {selector_type}: {selector_value}")
+                    break
+                except:
+                    continue
+            
+            if not username_field:
+                logger.error("Could not find username field with any selector")
+                logger.info(f"Page source excerpt: {page_source[:500]}")
                 return False
             
 
                 
             username_field.clear()
             username_field.send_keys(self.username)
+            logger.info("Username entered successfully")
             
-            # Find password field (confirmed from interactive test)
-            try:
-                password_field = self.driver.find_element(By.NAME, "password")
-                logger.info("Found password field")
-            except Exception as e:
-                logger.error(f"Could not find password field: {e}")
+            # Find password field with multiple strategies
+            password_field = None
+            password_selectors = [
+                (By.NAME, "password"),
+                (By.ID, "password"),
+                (By.XPATH, "//input[@type='password']"),
+                (By.XPATH, "//input[contains(@name, 'pass')]"),
+                (By.CSS_SELECTOR, "input[name='password']"),
+            ]
+            
+            for selector_type, selector_value in password_selectors:
+                try:
+                    password_field = self.driver.find_element(selector_type, selector_value)
+                    logger.info(f"Found password field using {selector_type}: {selector_value}")
+                    break
+                except:
+                    continue
+                    
+            if not password_field:
+                logger.error("Could not find password field with any selector")
                 return False
                 
             password_field.clear()
             password_field.send_keys(self.password)
+            logger.info("Password entered successfully")
             
             # Get captcha text and solve it (improved method)
             captcha_solved = False
@@ -222,28 +298,61 @@ class OTPTelegramBot:
                     captcha_answer = num1 + num2
                     logger.info(f"Found captcha: {num1} + {num2} = {captcha_answer}")
                     
-                    # Find captcha input field (confirmed: name='capt', type='number')
-                    try:
-                        captcha_field = self.driver.find_element(By.NAME, "capt")
+                    # Find captcha input field with multiple strategies
+                    captcha_field = None
+                    captcha_selectors = [
+                        (By.NAME, "capt"),
+                        (By.ID, "capt"),
+                        (By.XPATH, "//input[@type='number']"),
+                        (By.XPATH, "//input[contains(@name, 'capt')]"),
+                        (By.CSS_SELECTOR, "input[name='capt']"),
+                    ]
+                    
+                    for selector_type, selector_value in captcha_selectors:
+                        try:
+                            captcha_field = self.driver.find_element(selector_type, selector_value)
+                            logger.info(f"Found captcha field using {selector_type}: {selector_value}")
+                            break
+                        except:
+                            continue
+                    
+                    if captcha_field:
                         captcha_field.clear()
                         captcha_field.send_keys(str(captcha_answer))
                         captcha_solved = True
                         logger.info(f"Captcha solved and entered: {captcha_answer}")
-                    except Exception as e:
-                        logger.warning(f"Could not find or fill captcha field: {e}")
+                    else:
+                        logger.warning("Could not find captcha field with any selector")
                 else:
                     logger.warning("Could not find captcha pattern in page text")
                     
             except Exception as e:
                 logger.warning(f"Captcha handling failed: {e}")
             
-            # Submit form (confirmed working method)
-            try:
-                submit_button = self.driver.find_element(By.TAG_NAME, "button")
-                submit_button.click()
-                logger.info("Clicked submit button")
-            except Exception as e:
-                logger.error(f"Could not click submit button: {e}")
+            # Submit form with multiple strategies
+            submit_clicked = False
+            submit_selectors = [
+                (By.TAG_NAME, "button"),
+                (By.XPATH, "//input[@type='submit']"),
+                (By.XPATH, "//button[@type='submit']"),
+                (By.XPATH, "//input[contains(@value, 'Login')]"),
+                (By.XPATH, "//button[contains(text(), 'Login')]"),
+                (By.CSS_SELECTOR, "button[type='submit']"),
+                (By.CSS_SELECTOR, "input[type='submit']"),
+            ]
+            
+            for selector_type, selector_value in submit_selectors:
+                try:
+                    submit_button = self.driver.find_element(selector_type, selector_value)
+                    submit_button.click()
+                    logger.info(f"Clicked submit button using {selector_type}: {selector_value}")
+                    submit_clicked = True
+                    break
+                except:
+                    continue
+            
+            if not submit_clicked:
+                logger.error("Could not find or click submit button with any selector")
                 return False
             
             # Wait for redirect or check if login was successful
