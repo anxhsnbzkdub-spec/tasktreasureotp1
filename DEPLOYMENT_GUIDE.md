@@ -8,7 +8,7 @@
 3. `requirements.txt` - Python dependencies
 4. `render.yaml` - Render deploy কনফিগ
 5. `runtime.txt` - Python version specification
-6. `Aptfile` - Chrome installation for Render
+6. `Aptfile` - Chromium browser installation for Render
 7. `README.md` - প্রোজেক্ট ডকুমেন্টেশন
 8. `.gitignore` - Git ignore rules
 

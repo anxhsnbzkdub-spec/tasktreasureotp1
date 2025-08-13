@@ -71,14 +71,22 @@ class OTPTelegramBot:
         chrome_options.add_argument("--disable-background-timer-throttling")
         chrome_options.add_argument("--disable-backgrounding-occluded-windows")
         chrome_options.add_argument("--disable-renderer-backgrounding")
+        chrome_options.add_argument("--disable-software-rasterizer")
+        chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+        chrome_options.add_argument("--single-process")
+        chrome_options.add_argument("--disable-setuid-sandbox")
         chrome_options.add_argument("--user-agent=Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
         
         # Set Chrome binary path if available
         chrome_binary_paths = [
-            '/usr/bin/google-chrome',
-            '/usr/bin/google-chrome-stable', 
-            '/app/.apt/usr/bin/google-chrome',
+            '/usr/bin/chromium-browser',      # Render Aptfile install
+            '/usr/bin/chromium',              # Alternative Chromium path
+            '/usr/bin/google-chrome',         # Google Chrome
+            '/usr/bin/google-chrome-stable',  # Google Chrome stable
+            '/app/.apt/usr/bin/google-chrome', # Heroku buildpack
+            '/app/.apt/usr/bin/chromium-browser', # Heroku Chromium
             os.environ.get('GOOGLE_CHROME_BIN', ''),
+            os.environ.get('CHROME_BIN', ''),
         ]
         
         for chrome_path in chrome_binary_paths:
@@ -90,10 +98,11 @@ class OTPTelegramBot:
         try:
             # Check for various ChromeDriver locations
             chromedriver_paths = [
-                '/usr/local/bin/chromedriver',  # Docker
-                '/usr/bin/chromedriver',        # System install
-                '/app/.chromedriver/bin/chromedriver',  # Heroku/Render buildpack
-                os.environ.get('CHROMEDRIVER_PATH', ''),  # Environment variable
+                '/usr/bin/chromedriver',              # Aptfile install (Render)
+                '/usr/bin/chromium-chromedriver',     # Chromium driver
+                '/usr/local/bin/chromedriver',        # Docker
+                '/app/.chromedriver/bin/chromedriver', # Heroku/Render buildpack
+                os.environ.get('CHROMEDRIVER_PATH', ''), # Environment variable
             ]
             
             for chromedriver_path in chromedriver_paths:
