@@ -14,8 +14,7 @@ import hashlib
 from datetime import datetime
 from typing import Set, Dict, Any
 import json
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+
 
 import requests
 from playwright.async_api import async_playwright
@@ -33,54 +32,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-class HealthHandler(BaseHTTPRequestHandler):
-    """Simple health check HTTP handler"""
-    
-    def do_GET(self):
-        if self.path == "/":
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html; charset=utf-8')
-            self.end_headers()
-            html_content = f"""
-            <html>
-            <head><title>OTP Telegram Bot</title></head>
-            <body>
-                <h1>🤖 OTP Telegram Bot</h1>
-                <p>✅ Bot is running successfully!</p>
-                <p>📡 Monitoring for OTP messages...</p>
-                <p>🕐 Last check: {datetime.now()}</p>
-            </body>
-            </html>
-            """
-            self.wfile.write(html_content.encode('utf-8'))
-        elif self.path == "/health":
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b"OK")
-        else:
-            self.send_response(404)
-            self.end_headers()
-    
-    def log_message(self, format, *args):
-        # Suppress default HTTP server logs
-        pass
-
-def start_health_server():
-    """Start simple health check server"""
-    try:
-        port = int(os.environ.get('PORT', 8080))
-        logger.info(f"🌐 Starting health server on 0.0.0.0:{port}")
-        
-        server = HTTPServer(("0.0.0.0", port), HealthHandler)
-        logger.info(f"✅ Health server READY on port {port}")
-        
-        # This will block and serve forever
-        server.serve_forever()
-    except Exception as e:
-        logger.error(f"❌ Health server failed: {e}")
-        raise
 
 class OTPTelegramBot:
     def __init__(self):
@@ -836,29 +787,10 @@ Powered by @tasktreasur\\_support"""
             if self.playwright:
                 await self.playwright.stop()
 
-def main():
-    """Main function - start HTTP server first, then bot"""
-    logger.info("🚀 OTP Telegram Bot starting...")
-    
-    # CRITICAL: Start HTTP server FIRST for Render port binding
-    logger.info("📡 Starting health check server for Render...")
-    health_thread = threading.Thread(target=start_health_server, daemon=True)
-    health_thread.start()
-    
-    # Give server a moment to bind to port
-    import time
-    time.sleep(1)
-    logger.info("✅ Health server thread started")
-    
-    # Now start bot in async context
-    logger.info("🤖 Starting bot monitoring...")
-    
-    async def bot_main():
-        bot = OTPTelegramBot()
-        await bot.run_monitoring_loop()
-    
-    # Run the bot
-    asyncio.run(bot_main())
+async def main():
+    """Main async function for bot operation"""
+    bot = OTPTelegramBot()
+    await bot.run_monitoring_loop()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
