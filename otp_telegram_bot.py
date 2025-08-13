@@ -10,19 +10,13 @@ import logging
 import time
 import re
 import os
-import platform
+import hashlib
 from datetime import datetime
 from typing import Set, Dict, Any
 import json
 
 import requests
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
+from playwright.async_api import async_playwright
 import telegram
 from telegram.constants import ParseMode
 
@@ -35,439 +29,249 @@ logging.basicConfig(
         logging.StreamHandler()
     ]
 )
+
 logger = logging.getLogger(__name__)
 
 class OTPTelegramBot:
     def __init__(self):
-        # Telegram configuration
+        # Website credentials and URLs
+        self.username = "Roni_dada"
+        self.password = "Roni_dada"
+        self.login_url = "http://94.23.120.156/ints/login"
+        self.sms_url = "http://94.23.120.156/ints/client/SMSCDRStats"
+        
+        # Telegram Bot credentials
         self.bot_token = "8354306480:AAFPh2CTRZpjOdntLM8zqdM5kNkE6fthqPw"
         self.channel_id = "-1002724043027"
         
-        # Website configuration
-        self.login_url = "http://94.23.120.156/ints/login"
-        self.sms_url = "http://94.23.120.156/ints/client/SMSCDRStats"
-        self.username = "Roni_dada"
-        self.password = "Roni_dada"
-        
-        # Bot state
-        self.sent_messages: Set[str] = set()
-        self.session = requests.Session()
-        self.driver = None
+        # Initialize Telegram bot
         self.bot = telegram.Bot(token=self.bot_token)
         
-        # No fixed interval - continuous check and refresh cycle
+        # Store sent message hashes to prevent duplicates
+        self.sent_messages: Set[str] = set()
         
-    def setup_driver(self):
-        """Setup Chrome driver with appropriate options"""
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run in background
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-background-timer-throttling")
-        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
-        chrome_options.add_argument("--disable-renderer-backgrounding")
-        chrome_options.add_argument("--disable-software-rasterizer")
-        chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-        chrome_options.add_argument("--single-process")
-        chrome_options.add_argument("--disable-setuid-sandbox")
-        chrome_options.add_argument("--ignore-certificate-errors")
-        chrome_options.add_argument("--ignore-ssl-errors")
-        chrome_options.add_argument("--ignore-certificate-errors-spki-list")
-        chrome_options.add_argument("--ignore-certificate-errors-invalid-ca")
-        chrome_options.add_argument("--allow-running-insecure-content")
-        chrome_options.add_argument("--disable-web-security")
-        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+        # Playwright browser and page
+        self.browser = None
+        self.page = None
         
-        # Set Chrome binary path if available
-        chrome_binary_paths = [
-            '/usr/bin/chromium',              # Render Aptfile install (primary)
-            '/usr/bin/chromium-browser',      # Alternative Chromium
-            '/usr/bin/google-chrome',         # Google Chrome
-            '/usr/bin/google-chrome-stable',  # Google Chrome stable
-            '/snap/bin/chromium',             # Snap install
-            '/app/.apt/usr/bin/chromium',     # Heroku Chromium
-            '/app/.apt/usr/bin/chromium-browser', # Heroku Chromium alt
-            '/app/.apt/usr/bin/google-chrome', # Heroku buildpack
-            os.environ.get('GOOGLE_CHROME_BIN', ''),
-            os.environ.get('CHROME_BIN', ''),
-        ]
+    async def setup_browser(self):
+        """Setup Playwright browser with appropriate options"""
+        logger.info("Setting up Playwright browser...")
         
-        # Debug: Check which Chrome binaries exist
-        logger.info("Checking for Chrome binaries...")
-        for chrome_path in chrome_binary_paths:
-            if chrome_path:
-                exists = os.path.exists(chrome_path)
-                logger.info(f"Chrome binary {chrome_path}: {'EXISTS' if exists else 'NOT FOUND'}")
-                if exists:
-                    chrome_options.binary_location = chrome_path
-                    logger.info(f"Using Chrome binary at: {chrome_path}")
-                    break
+        playwright = await async_playwright().start()
         
-        # If no binary found, try to detect system Chrome
-        if not hasattr(chrome_options, 'binary_location') or not chrome_options.binary_location:
-            logger.warning("No Chrome binary found in standard locations, trying system detection...")
-            try:
-                import subprocess
-                # Try to find chromium via which command
-                result = subprocess.run(['which', 'chromium-browser'], capture_output=True, text=True)
-                if result.returncode == 0:
-                    chromium_path = result.stdout.strip()
-                    logger.info(f"Found chromium via 'which': {chromium_path}")
-                    chrome_options.binary_location = chromium_path
-                else:
-                    result = subprocess.run(['which', 'chromium'], capture_output=True, text=True)
-                    if result.returncode == 0:
-                        chromium_path = result.stdout.strip()
-                        logger.info(f"Found chromium via 'which': {chromium_path}")
-                        chrome_options.binary_location = chromium_path
-            except Exception as e:
-                logger.warning(f"System Chrome detection failed: {e}")
-        
-        try:
-            # Check for various ChromeDriver locations
-            chromedriver_paths = [
-                '/usr/bin/chromedriver',              # Standard install
-                '/usr/bin/chromium-driver',           # Aptfile install (Render)
-                '/usr/bin/chromium-chromedriver',     # Alternative name
-                '/usr/local/bin/chromedriver',        # Docker
-                '/snap/bin/chromium.chromedriver',    # Snap install
-                '/app/.chromedriver/bin/chromedriver', # Heroku/Render buildpack
-                os.environ.get('CHROMEDRIVER_PATH', ''), # Environment variable
+        # Launch browser with options
+        self.browser = await playwright.chromium.launch(
+            headless=True,
+            args=[
+                '--no-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-web-security',
+                '--allow-running-insecure-content',
+                '--ignore-certificate-errors',
+                '--ignore-ssl-errors',
+                '--ignore-certificate-errors-spki-list',
+                '--ignore-certificate-errors-invalid-ca',
+                '--disable-setuid-sandbox',
             ]
-            
-            # Debug: Check which ChromeDriver binaries exist
-            logger.info("Checking for ChromeDriver binaries...")
-            for chromedriver_path in chromedriver_paths:
-                if chromedriver_path:
-                    exists = os.path.exists(chromedriver_path)
-                    logger.info(f"ChromeDriver {chromedriver_path}: {'EXISTS' if exists else 'NOT FOUND'}")
-                    if exists:
-                        logger.info(f"Using chromedriver at: {chromedriver_path}")
-                        service = Service(chromedriver_path)
-                        self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                        return self.driver
-            
-            # Check for local Windows chromedriver.exe
-            if os.path.exists('./chromedriver.exe') and platform.system() == 'Windows':
-                logger.info("Using local Windows chromedriver")
-                service = Service('./chromedriver.exe')
-                self.driver = webdriver.Chrome(service=service, options=chrome_options)
-                return self.driver
-        except Exception as e:
-            logger.warning(f"Specific chromedriver failed: {e}")
+        )
         
-        try:
-            # Try ChromeDriverManager as fallback
-            logger.info("Trying ChromeDriverManager...")
-            from webdriver_manager.chrome import ChromeDriverManager
-            
-            # Force ChromeDriverManager to use specific Chrome version if we have binary location
-            if hasattr(chrome_options, 'binary_location') and chrome_options.binary_location:
-                logger.info(f"Setting Chrome binary for WebDriverManager: {chrome_options.binary_location}")
-            
-            service = Service(ChromeDriverManager().install())
-            self.driver = webdriver.Chrome(service=service, options=chrome_options)
-            logger.info("ChromeDriverManager setup successful")
-        except Exception as e:
-            logger.warning(f"ChromeDriverManager failed: {e}")
-            logger.info("Trying system Chrome without explicit driver path...")
-            try:
-                # Fallback to system Chrome - let Chrome find its own driver
-                self.driver = webdriver.Chrome(options=chrome_options)
-                logger.info("System Chrome setup successful")
-            except Exception as e2:
-                logger.error(f"System Chrome failed: {e2}")
-                logger.error(f"Chrome binary location: {getattr(chrome_options, 'binary_location', 'Not set')}")
-                
-                # Final fallback - try multiple chromium paths
-                fallback_paths = ['/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium']
-                fallback_success = False
-                
-                for fallback_path in fallback_paths:
-                    try:
-                        logger.info(f"Final fallback: trying {fallback_path} directly...")
-                        chrome_options.binary_location = fallback_path
-                        self.driver = webdriver.Chrome(options=chrome_options)
-                        logger.info(f"Chromium fallback successful with {fallback_path}")
-                        fallback_success = True
-                        break
-                    except Exception as e3:
-                        logger.warning(f"Fallback with {fallback_path} failed: {e3}")
-                        continue
-                
-                if not fallback_success:
-                    logger.error("All Chrome setup methods failed")
-                    # Try one last time with minimal options
-                    try:
-                        logger.info("Last resort: minimal Chrome options...")
-                        minimal_options = Options()
-                        minimal_options.add_argument("--headless")
-                        minimal_options.add_argument("--no-sandbox")
-                        minimal_options.add_argument("--disable-dev-shm-usage")
-                        self.driver = webdriver.Chrome(options=minimal_options)
-                        logger.info("Minimal Chrome setup successful")
-                    except Exception as final_error:
-                        raise Exception(f"Could not setup Chrome driver with any method: {final_error}")
+        # Create new page
+        self.page = await self.browser.new_page()
         
-        return self.driver
+        # Set user agent
+        await self.page.set_user_agent('Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+        
+        logger.info("Playwright browser setup successful")
+        return True
     
-    def solve_captcha(self, captcha_text: str) -> int:
+    async def solve_captcha(self, page_content: str) -> int:
         """Solve simple math captcha"""
         try:
-            # Extract numbers and operator from captcha text
-            # Expected format: "What is X + Y = ?"
-            match = re.search(r'(\d+)\s*\+\s*(\d+)', captcha_text)
-            if match:
-                num1, num2 = map(int, match.groups())
+            # Look for captcha pattern in page content
+            captcha_match = re.search(r'What is (\d+) \+ (\d+) = \?', page_content)
+            if captcha_match:
+                num1, num2 = map(int, captcha_match.groups())
                 result = num1 + num2
                 logger.info(f"Solved captcha: {num1} + {num2} = {result}")
                 return result
-            
-            # Try other operators if needed
-            match = re.search(r'(\d+)\s*-\s*(\d+)', captcha_text)
-            if match:
-                num1, num2 = map(int, match.groups())
-                result = num1 - num2
-                logger.info(f"Solved captcha: {num1} - {num2} = {result}")
-                return result
-                
-            match = re.search(r'(\d+)\s*\*\s*(\d+)', captcha_text)
-            if match:
-                num1, num2 = map(int, match.groups())
-                result = num1 * num2
-                logger.info(f"Solved captcha: {num1} * {num2} = {result}")
-                return result
-                
         except Exception as e:
             logger.error(f"Error solving captcha: {e}")
         
         return 0
     
-    def login_to_website(self) -> bool:
+    async def login_to_website(self) -> bool:
         """Login to the website with captcha solving"""
         try:
             logger.info("Starting login process...")
-            self.driver.get(self.login_url)
             
-            # Wait longer for SSL warning page to load
-            time.sleep(5)
+            # Navigate to login page
+            await self.page.goto(self.login_url, wait_until='load', timeout=30000)
             
-            # Handle SSL certificate warning if present
-            try:
-                # Check if we're on SSL warning page
-                if "not secure" in self.driver.title.lower() or "privacy error" in self.driver.page_source.lower():
-                    logger.info("Detected SSL warning page, attempting to bypass...")
-                    
-                    # Multiple strategies to bypass SSL warning
-                    bypassed = False
-                    
-                    # Strategy 1: Click Advanced button then Proceed link
-                    try:
-                        # Try multiple selectors for Advanced button
-                        advanced_selectors = [
-                            (By.ID, "details-button"),
-                            (By.XPATH, "//button[contains(text(), 'Advanced')]"),
-                            (By.XPATH, "//span[contains(text(), 'Advanced')]//parent::button"),
-                            (By.CSS_SELECTOR, "#details-button"),
-                            (By.CSS_SELECTOR, "button[id*='details']"),
-                        ]
+            # Wait for page to load
+            await asyncio.sleep(3)
+            
+            # Get page content for debugging
+            page_content = await self.page.content()
+            page_title = await self.page.title()
+            current_url = self.page.url
+            
+            logger.info(f"Page title: {page_title}")
+            logger.info(f"Current URL: {current_url}")
+            
+            # Handle SSL warning if present
+            if "not secure" in page_title.lower() or "privacy error" in page_content.lower():
+                logger.info("Detected SSL warning page, attempting to bypass...")
+                
+                # Try to click Advanced button
+                try:
+                    advanced_button = await self.page.query_selector('#details-button')
+                    if advanced_button:
+                        await advanced_button.click()
+                        await asyncio.sleep(2)
                         
-                        for selector_type, selector_value in advanced_selectors:
-                            try:
-                                advanced_button = self.driver.find_element(selector_type, selector_value)
-                                if advanced_button.is_displayed() and advanced_button.is_enabled():
-                                    logger.info(f"Clicking Advanced button using {selector_type}")
-                                    self.driver.execute_script("arguments[0].click();", advanced_button)
-                                    time.sleep(2)
-                                    break
-                            except:
-                                continue
+                        # Try to click proceed link
+                        proceed_link = await self.page.query_selector('#proceed-link')
+                        if proceed_link:
+                            await proceed_link.click()
+                            await asyncio.sleep(3)
+                            logger.info("SSL warning bypassed successfully")
                         
-                        # Try to find and click proceed link
-                        proceed_selectors = [
-                            (By.ID, "proceed-link"),
-                            (By.XPATH, "//a[contains(text(), 'Proceed')]"),
-                            (By.XPATH, "//a[contains(text(), 'unsafe')]"),
-                            (By.XPATH, "//a[contains(@href, 'unsafe')]"),
-                            (By.CSS_SELECTOR, "#proceed-link"),
-                            (By.CSS_SELECTOR, "a[id*='proceed']"),
-                        ]
-                        
-                        for selector_type, selector_value in proceed_selectors:
-                            try:
-                                proceed_link = self.driver.find_element(selector_type, selector_value)
-                                if proceed_link.is_displayed() and proceed_link.is_enabled():
-                                    logger.info(f"Clicking proceed link using {selector_type}")
-                                    self.driver.execute_script("arguments[0].click();", proceed_link)
-                                    time.sleep(3)
-                                    bypassed = True
-                                    break
-                            except:
-                                continue
-                                
-                    except Exception as e:
-                        logger.warning(f"Advanced/Proceed method failed: {e}")
-                    
-                    # Strategy 2: Try direct navigation if button click failed
-                    if not bypassed:
-                        logger.info("Direct SSL bypass failed, trying to reload with --allow-running-insecure-content")
-                        try:
-                            # Force navigate directly to the URL again
-                            self.driver.get(self.login_url)
-                            time.sleep(3)
-                        except Exception as e:
-                            logger.warning(f"Direct navigation failed: {e}")
-                            
-            except Exception as ssl_error:
-                logger.warning(f"SSL handling failed: {ssl_error}")
+                except Exception as ssl_error:
+                    logger.warning(f"SSL bypass failed: {ssl_error}")
+                    # Try direct navigation
+                    await self.page.goto(self.login_url, wait_until='load', timeout=30000)
+                    await asyncio.sleep(3)
             
-            # Wait for actual login page to load
-            WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
+            # Wait for login form elements
+            await self.page.wait_for_load_state('networkidle', timeout=15000)
             
-            # Get page source for debugging
-            page_source = self.driver.page_source
-            logger.info(f"Page title: {self.driver.title}")
-            logger.info(f"Current URL: {self.driver.current_url}")
+            # Get updated page content
+            page_content = await self.page.content()
+            page_title = await self.page.title()
+            current_url = self.page.url
             
-            # Find username field with multiple strategies
+            logger.info(f"After SSL handling - Title: {page_title}")
+            logger.info(f"After SSL handling - URL: {current_url}")
+            
+            # Find and fill username field
             username_field = None
             username_selectors = [
-                (By.NAME, "username"),
-                (By.ID, "username"),
-                (By.XPATH, "//input[@type='text']"),
-                (By.XPATH, "//input[contains(@name, 'user')]"),
-                (By.CSS_SELECTOR, "input[name='username']"),
+                'input[name="username"]',
+                'input[id="username"]', 
+                'input[type="text"]',
+                'input[name*="user"]'
             ]
             
-            for selector_type, selector_value in username_selectors:
+            for selector in username_selectors:
                 try:
-                    username_field = self.driver.find_element(selector_type, selector_value)
-                    logger.info(f"Found username field using {selector_type}: {selector_value}")
-                    break
+                    username_field = await self.page.query_selector(selector)
+                    if username_field:
+                        logger.info(f"Found username field using selector: {selector}")
+                        break
                 except:
                     continue
             
             if not username_field:
-                logger.error("Could not find username field with any selector")
-                logger.info(f"Page source excerpt: {page_source[:500]}")
+                logger.error("Could not find username field")
+                logger.info(f"Page content excerpt: {page_content[:500]}")
                 return False
             
-
-                
-            username_field.clear()
-            username_field.send_keys(self.username)
+            # Clear and fill username
+            await username_field.clear()
+            await username_field.fill(self.username)
             logger.info("Username entered successfully")
             
-            # Find password field with multiple strategies
+            # Find and fill password field
             password_field = None
             password_selectors = [
-                (By.NAME, "password"),
-                (By.ID, "password"),
-                (By.XPATH, "//input[@type='password']"),
-                (By.XPATH, "//input[contains(@name, 'pass')]"),
-                (By.CSS_SELECTOR, "input[name='password']"),
+                'input[name="password"]',
+                'input[id="password"]',
+                'input[type="password"]',
+                'input[name*="pass"]'
             ]
             
-            for selector_type, selector_value in password_selectors:
+            for selector in password_selectors:
                 try:
-                    password_field = self.driver.find_element(selector_type, selector_value)
-                    logger.info(f"Found password field using {selector_type}: {selector_value}")
-                    break
+                    password_field = await self.page.query_selector(selector)
+                    if password_field:
+                        logger.info(f"Found password field using selector: {selector}")
+                        break
                 except:
                     continue
-                    
+            
             if not password_field:
-                logger.error("Could not find password field with any selector")
+                logger.error("Could not find password field")
                 return False
-                
-            password_field.clear()
-            password_field.send_keys(self.password)
+            
+            # Clear and fill password
+            await password_field.clear()
+            await password_field.fill(self.password)
             logger.info("Password entered successfully")
             
-            # Get captcha text and solve it (improved method)
-            captcha_solved = False
-            try:
-                # Get the full page text to find captcha
-                page_text = self.driver.find_element(By.TAG_NAME, "body").text
-                logger.info(f"Page text excerpt: {page_text[:200]}")
+            # Solve captcha
+            captcha_answer = await self.solve_captcha(page_content)
+            if captcha_answer > 0:
+                captcha_field = None
+                captcha_selectors = [
+                    'input[name="capt"]',
+                    'input[id="capt"]',
+                    'input[type="number"]',
+                    'input[name*="capt"]'
+                ]
                 
-                # Look for captcha pattern in page text
-                import re
-                captcha_match = re.search(r'What is (\d+) \+ (\d+) = \?', page_text)
-                if captcha_match:
-                    num1, num2 = map(int, captcha_match.groups())
-                    captcha_answer = num1 + num2
-                    logger.info(f"Found captcha: {num1} + {num2} = {captcha_answer}")
-                    
-                    # Find captcha input field with multiple strategies
-                    captcha_field = None
-                    captcha_selectors = [
-                        (By.NAME, "capt"),
-                        (By.ID, "capt"),
-                        (By.XPATH, "//input[@type='number']"),
-                        (By.XPATH, "//input[contains(@name, 'capt')]"),
-                        (By.CSS_SELECTOR, "input[name='capt']"),
-                    ]
-                    
-                    for selector_type, selector_value in captcha_selectors:
-                        try:
-                            captcha_field = self.driver.find_element(selector_type, selector_value)
-                            logger.info(f"Found captcha field using {selector_type}: {selector_value}")
+                for selector in captcha_selectors:
+                    try:
+                        captcha_field = await self.page.query_selector(selector)
+                        if captcha_field:
+                            logger.info(f"Found captcha field using selector: {selector}")
                             break
-                        except:
-                            continue
-                    
-                    if captcha_field:
-                        captcha_field.clear()
-                        captcha_field.send_keys(str(captcha_answer))
-                        captcha_solved = True
-                        logger.info(f"Captcha solved and entered: {captcha_answer}")
-                    else:
-                        logger.warning("Could not find captcha field with any selector")
+                    except:
+                        continue
+                
+                if captcha_field:
+                    await captcha_field.clear()
+                    await captcha_field.fill(str(captcha_answer))
+                    logger.info(f"Captcha solved and entered: {captcha_answer}")
                 else:
-                    logger.warning("Could not find captcha pattern in page text")
-                    
-            except Exception as e:
-                logger.warning(f"Captcha handling failed: {e}")
+                    logger.warning("Could not find captcha field")
             
-            # Submit form with multiple strategies
-            submit_clicked = False
+            # Submit form
+            submit_button = None
             submit_selectors = [
-                (By.TAG_NAME, "button"),
-                (By.XPATH, "//input[@type='submit']"),
-                (By.XPATH, "//button[@type='submit']"),
-                (By.XPATH, "//input[contains(@value, 'Login')]"),
-                (By.XPATH, "//button[contains(text(), 'Login')]"),
-                (By.CSS_SELECTOR, "button[type='submit']"),
-                (By.CSS_SELECTOR, "input[type='submit']"),
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button',
+                'input[value*="Login"]',
+                'button:has-text("Login")'
             ]
             
-            for selector_type, selector_value in submit_selectors:
+            for selector in submit_selectors:
                 try:
-                    submit_button = self.driver.find_element(selector_type, selector_value)
-                    submit_button.click()
-                    logger.info(f"Clicked submit button using {selector_type}: {selector_value}")
-                    submit_clicked = True
-                    break
+                    submit_button = await self.page.query_selector(selector)
+                    if submit_button:
+                        logger.info(f"Found submit button using selector: {selector}")
+                        break
                 except:
                     continue
             
-            if not submit_clicked:
-                logger.error("Could not find or click submit button with any selector")
+            if not submit_button:
+                logger.error("Could not find submit button")
                 return False
             
-            # Wait for redirect or check if login was successful
-            time.sleep(5)
+            # Click submit
+            await submit_button.click()
+            logger.info("Clicked submit button")
             
-            current_url = self.driver.current_url
+            # Wait for navigation
+            await self.page.wait_for_load_state('networkidle', timeout=10000)
+            await asyncio.sleep(3)
+            
+            # Check if login was successful
+            current_url = self.page.url
             logger.info(f"After login URL: {current_url}")
             
-            # Check for successful login (confirmed pattern from interactive test)
             if "client" in current_url.lower() and "login" not in current_url.lower():
                 logger.info("Login successful!")
                 return True
@@ -480,103 +284,55 @@ class OTPTelegramBot:
             return False
     
     def get_country_info(self, phone_number: str) -> Dict[str, str]:
-        """Get country information based on phone number"""
+        """Get country name and flag based on phone number"""
         country_codes = {
-            # North America
+            # Major countries
             '1': {'name': 'USA/Canada', 'flag': '🇺🇸'},
-            '52': {'name': 'Mexico', 'flag': '🇲🇽'},
-            
-            # Europe
-            '44': {'name': 'UK', 'flag': '🇬🇧'},
-            '33': {'name': 'France', 'flag': '🇫🇷'},
-            '49': {'name': 'Germany', 'flag': '🇩🇪'},
-            '39': {'name': 'Italy', 'flag': '🇮🇹'},
-            '34': {'name': 'Spain', 'flag': '🇪🇸'},
+            '7': {'name': 'Russia', 'flag': '🇷🇺'},
+            '20': {'name': 'Egypt', 'flag': '🇪🇬'},
+            '27': {'name': 'South Africa', 'flag': '🇿🇦'},
+            '30': {'name': 'Greece', 'flag': '🇬🇷'},
             '31': {'name': 'Netherlands', 'flag': '🇳🇱'},
             '32': {'name': 'Belgium', 'flag': '🇧🇪'},
+            '33': {'name': 'France', 'flag': '🇫🇷'},
+            '34': {'name': 'Spain', 'flag': '🇪🇸'},
+            '36': {'name': 'Hungary', 'flag': '🇭🇺'},
+            '39': {'name': 'Italy', 'flag': '🇮🇹'},
+            '40': {'name': 'Romania', 'flag': '🇷🇴'},
             '41': {'name': 'Switzerland', 'flag': '🇨🇭'},
             '43': {'name': 'Austria', 'flag': '🇦🇹'},
+            '44': {'name': 'United Kingdom', 'flag': '🇬🇧'},
             '45': {'name': 'Denmark', 'flag': '🇩🇰'},
             '46': {'name': 'Sweden', 'flag': '🇸🇪'},
             '47': {'name': 'Norway', 'flag': '🇳🇴'},
             '48': {'name': 'Poland', 'flag': '🇵🇱'},
-            '351': {'name': 'Portugal', 'flag': '🇵🇹'},
-            '30': {'name': 'Greece', 'flag': '🇬🇷'},
-            '7': {'name': 'Russia', 'flag': '🇷🇺'},
-            '380': {'name': 'Ukraine', 'flag': '🇺🇦'},
-            '36': {'name': 'Hungary', 'flag': '🇭🇺'},
-            '420': {'name': 'Czech Republic', 'flag': '🇨🇿'},
-            '421': {'name': 'Slovakia', 'flag': '🇸🇰'},
-            '386': {'name': 'Slovenia', 'flag': '🇸🇮'},
-            '385': {'name': 'Croatia', 'flag': '🇭🇷'},
-            '381': {'name': 'Serbia', 'flag': '🇷🇸'},
-            '382': {'name': 'Montenegro', 'flag': '🇲🇪'},
-            '387': {'name': 'Bosnia', 'flag': '🇧🇦'},
-            '389': {'name': 'Macedonia', 'flag': '🇲🇰'},
-            '355': {'name': 'Albania', 'flag': '🇦🇱'},
-            '40': {'name': 'Romania', 'flag': '🇷🇴'},
-            '359': {'name': 'Bulgaria', 'flag': '🇧🇬'},
-            '358': {'name': 'Finland', 'flag': '🇫🇮'},
-            '372': {'name': 'Estonia', 'flag': '🇪🇪'},
-            '371': {'name': 'Latvia', 'flag': '🇱🇻'},
-            '370': {'name': 'Lithuania', 'flag': '🇱🇹'},
-            '353': {'name': 'Ireland', 'flag': '🇮🇪'},
-            '354': {'name': 'Iceland', 'flag': '🇮🇸'},
-            '298': {'name': 'Faroe Islands', 'flag': '🇫🇴'},
-            '90': {'name': 'Turkey', 'flag': '🇹🇷'},
-            
-            # Asia
-            '86': {'name': 'China', 'flag': '🇨🇳'},
-            '91': {'name': 'India', 'flag': '🇮🇳'},
-            '81': {'name': 'Japan', 'flag': '🇯🇵'},
-            '82': {'name': 'South Korea', 'flag': '🇰🇷'},
-            '65': {'name': 'Singapore', 'flag': '🇸🇬'},
+            '49': {'name': 'Germany', 'flag': '🇩🇪'},
+            '51': {'name': 'Peru', 'flag': '🇵🇪'},
+            '52': {'name': 'Mexico', 'flag': '🇲🇽'},
+            '53': {'name': 'Cuba', 'flag': '🇨🇺'},
+            '54': {'name': 'Argentina', 'flag': '🇦🇷'},
+            '55': {'name': 'Brazil', 'flag': '🇧🇷'},
+            '56': {'name': 'Chile', 'flag': '🇨🇱'},
+            '57': {'name': 'Colombia', 'flag': '🇨🇴'},
+            '58': {'name': 'Venezuela', 'flag': '🇻🇪'},
             '60': {'name': 'Malaysia', 'flag': '🇲🇾'},
-            '66': {'name': 'Thailand', 'flag': '🇹🇭'},
-            '84': {'name': 'Vietnam', 'flag': '🇻🇳'},
+            '61': {'name': 'Australia', 'flag': '🇦🇺'},
             '62': {'name': 'Indonesia', 'flag': '🇮🇩'},
             '63': {'name': 'Philippines', 'flag': '🇵🇭'},
-            '880': {'name': 'Bangladesh', 'flag': '🇧🇩'},
+            '64': {'name': 'New Zealand', 'flag': '🇳🇿'},
+            '65': {'name': 'Singapore', 'flag': '🇸🇬'},
+            '66': {'name': 'Thailand', 'flag': '🇹🇭'},
+            '81': {'name': 'Japan', 'flag': '🇯🇵'},
+            '82': {'name': 'South Korea', 'flag': '🇰🇷'},
+            '84': {'name': 'Vietnam', 'flag': '🇻🇳'},
+            '86': {'name': 'China', 'flag': '🇨🇳'},
+            '90': {'name': 'Turkey', 'flag': '🇹🇷'},
+            '91': {'name': 'India', 'flag': '🇮🇳'},
             '92': {'name': 'Pakistan', 'flag': '🇵🇰'},
+            '93': {'name': 'Afghanistan', 'flag': '🇦🇫'},
             '94': {'name': 'Sri Lanka', 'flag': '🇱🇰'},
             '95': {'name': 'Myanmar', 'flag': '🇲🇲'},
-            '855': {'name': 'Cambodia', 'flag': '🇰🇭'},
-            '856': {'name': 'Laos', 'flag': '🇱🇦'},
-            '673': {'name': 'Brunei', 'flag': '🇧🇳'},
-            '976': {'name': 'Mongolia', 'flag': '🇲🇳'},
-            '852': {'name': 'Hong Kong', 'flag': '🇭🇰'},
-            '853': {'name': 'Macau', 'flag': '🇲🇴'},
-            '886': {'name': 'Taiwan', 'flag': '🇹🇼'},
-            '850': {'name': 'North Korea', 'flag': '🇰🇵'},
-            '977': {'name': 'Nepal', 'flag': '🇳🇵'},
-            '975': {'name': 'Bhutan', 'flag': '🇧🇹'},
-            '960': {'name': 'Maldives', 'flag': '🇲🇻'},
             '98': {'name': 'Iran', 'flag': '🇮🇷'},
-            '93': {'name': 'Afghanistan', 'flag': '🇦🇫'},
-            '992': {'name': 'Tajikistan', 'flag': '🇹🇯'},
-            '993': {'name': 'Turkmenistan', 'flag': '🇹🇲'},
-            '998': {'name': 'Uzbekistan', 'flag': '🇺🇿'},
-            '996': {'name': 'Kyrgyzstan', 'flag': '🇰🇬'},
-            '7': {'name': 'Kazakhstan', 'flag': '🇰🇿'},
-            
-            # Middle East
-            '971': {'name': 'UAE', 'flag': '🇦🇪'},
-            '966': {'name': 'Saudi Arabia', 'flag': '🇸🇦'},
-            '974': {'name': 'Qatar', 'flag': '🇶🇦'},
-            '973': {'name': 'Bahrain', 'flag': '🇧🇭'},
-            '968': {'name': 'Oman', 'flag': '🇴🇲'},
-            '965': {'name': 'Kuwait', 'flag': '🇰🇼'},
-            '972': {'name': 'Israel', 'flag': '🇮🇱'},
-            '970': {'name': 'Palestine', 'flag': '🇵🇸'},
-            '962': {'name': 'Jordan', 'flag': '🇯🇴'},
-            '961': {'name': 'Lebanon', 'flag': '🇱🇧'},
-            '963': {'name': 'Syria', 'flag': '🇸🇾'},
-            '964': {'name': 'Iraq', 'flag': '🇮🇶'},
-            '967': {'name': 'Yemen', 'flag': '🇾🇪'},
-            
-            # Africa
-            '20': {'name': 'Egypt', 'flag': '🇪🇬'},
-            '27': {'name': 'South Africa', 'flag': '🇿🇦'},
             '212': {'name': 'Morocco', 'flag': '🇲🇦'},
             '213': {'name': 'Algeria', 'flag': '🇩🇿'},
             '216': {'name': 'Tunisia', 'flag': '🇹🇳'},
@@ -600,14 +356,14 @@ class OTPTelegramBot:
             '236': {'name': 'Central African Republic', 'flag': '🇨🇫'},
             '237': {'name': 'Cameroon', 'flag': '🇨🇲'},
             '238': {'name': 'Cape Verde', 'flag': '🇨🇻'},
-            '239': {'name': 'Sao Tome', 'flag': '🇸🇹'},
+            '239': {'name': 'Sao Tome and Principe', 'flag': '🇸🇹'},
             '240': {'name': 'Equatorial Guinea', 'flag': '🇬🇶'},
             '241': {'name': 'Gabon', 'flag': '🇬🇦'},
-            '242': {'name': 'Congo', 'flag': '🇨🇬'},
-            '243': {'name': 'DR Congo', 'flag': '🇨🇩'},
+            '242': {'name': 'Republic of Congo', 'flag': '🇨🇬'},
+            '243': {'name': 'Democratic Republic of Congo', 'flag': '🇨🇩'},
             '244': {'name': 'Angola', 'flag': '🇦🇴'},
             '245': {'name': 'Guinea-Bissau', 'flag': '🇬🇼'},
-            '246': {'name': 'Diego Garcia', 'flag': '🇮🇴'},
+            '246': {'name': 'British Indian Ocean Territory', 'flag': '🇮🇴'},
             '248': {'name': 'Seychelles', 'flag': '🇸🇨'},
             '249': {'name': 'Sudan', 'flag': '🇸🇩'},
             '250': {'name': 'Rwanda', 'flag': '🇷🇼'},
@@ -629,80 +385,66 @@ class OTPTelegramBot:
             '267': {'name': 'Botswana', 'flag': '🇧🇼'},
             '268': {'name': 'Swaziland', 'flag': '🇸🇿'},
             '269': {'name': 'Comoros', 'flag': '🇰🇲'},
-            
-            # South America
-            '55': {'name': 'Brazil', 'flag': '🇧🇷'},
-            '54': {'name': 'Argentina', 'flag': '🇦🇷'},
-            '56': {'name': 'Chile', 'flag': '🇨🇱'},
-            '57': {'name': 'Colombia', 'flag': '🇨🇴'},
-            '58': {'name': 'Venezuela', 'flag': '🇻🇪'},
-            '51': {'name': 'Peru', 'flag': '🇵🇪'},
-            '593': {'name': 'Ecuador', 'flag': '🇪🇨'},
-            '591': {'name': 'Bolivia', 'flag': '🇧🇴'},
-            '595': {'name': 'Paraguay', 'flag': '🇵🇾'},
-            '598': {'name': 'Uruguay', 'flag': '🇺🇾'},
-            '597': {'name': 'Suriname', 'flag': '🇸🇷'},
-            '594': {'name': 'French Guiana', 'flag': '🇬🇫'},
-            '592': {'name': 'Guyana', 'flag': '🇬🇾'},
-            
-            # Oceania
-            '61': {'name': 'Australia', 'flag': '🇦🇺'},
-            '64': {'name': 'New Zealand', 'flag': '🇳🇿'},
-            '679': {'name': 'Fiji', 'flag': '🇫🇯'},
-            '685': {'name': 'Samoa', 'flag': '🇼🇸'},
-            '686': {'name': 'Kiribati', 'flag': '🇰🇮'},
-            '687': {'name': 'New Caledonia', 'flag': '🇳🇨'},
-            '688': {'name': 'Tuvalu', 'flag': '🇹🇻'},
-            '689': {'name': 'French Polynesia', 'flag': '🇵🇫'},
-            '690': {'name': 'Tokelau', 'flag': '🇹🇰'},
-            '691': {'name': 'Micronesia', 'flag': '🇫🇲'},
-            '692': {'name': 'Marshall Islands', 'flag': '🇲🇭'},
-            '508': {'name': 'St Pierre', 'flag': '🇵🇲'},
-            
-            # Caribbean
-            '590': {'name': 'Guadeloupe', 'flag': '🇬🇵'},
-            '596': {'name': 'Martinique', 'flag': '🇲🇶'},
-            '599': {'name': 'Netherlands Antilles', 'flag': '🇨🇼'},
-            '1242': {'name': 'Bahamas', 'flag': '🇧🇸'},
-            '1246': {'name': 'Barbados', 'flag': '🇧🇧'},
-            '1264': {'name': 'Anguilla', 'flag': '🇦🇮'},
-            '1268': {'name': 'Antigua', 'flag': '🇦🇬'},
-            '1284': {'name': 'British Virgin Islands', 'flag': '🇻🇬'},
-            '1345': {'name': 'Cayman Islands', 'flag': '🇰🇾'},
-            '1441': {'name': 'Bermuda', 'flag': '🇧🇲'},
-            '1473': {'name': 'Grenada', 'flag': '🇬🇩'},
-            '1649': {'name': 'Turks and Caicos', 'flag': '🇹🇨'},
-            '1664': {'name': 'Montserrat', 'flag': '🇲🇸'},
-            '1721': {'name': 'Sint Maarten', 'flag': '🇸🇽'},
-            '1758': {'name': 'St Lucia', 'flag': '🇱🇨'},
-            '1767': {'name': 'Dominica', 'flag': '🇩🇲'},
-            '1784': {'name': 'St Vincent', 'flag': '🇻🇨'},
-            '1787': {'name': 'Puerto Rico', 'flag': '🇵🇷'},
-            '1809': {'name': 'Dominican Republic', 'flag': '🇩🇴'},
-            '1829': {'name': 'Dominican Republic', 'flag': '🇩🇴'},
-            '1849': {'name': 'Dominican Republic', 'flag': '🇩🇴'},
-            '1868': {'name': 'Trinidad and Tobago', 'flag': '🇹🇹'},
-            '1869': {'name': 'St Kitts and Nevis', 'flag': '🇰🇳'},
-            '1876': {'name': 'Jamaica', 'flag': '🇯🇲'},
-            '53': {'name': 'Cuba', 'flag': '🇨🇺'},
+            '290': {'name': 'Saint Helena', 'flag': '🇸🇭'},
+            '291': {'name': 'Eritrea', 'flag': '🇪🇷'},
+            '297': {'name': 'Aruba', 'flag': '🇦🇼'},
+            '298': {'name': 'Faroe Islands', 'flag': '🇫🇴'},
+            '299': {'name': 'Greenland', 'flag': '🇬🇱'},
+            '350': {'name': 'Gibraltar', 'flag': '🇬🇮'},
+            '351': {'name': 'Portugal', 'flag': '🇵🇹'},
+            '352': {'name': 'Luxembourg', 'flag': '🇱🇺'},
+            '353': {'name': 'Ireland', 'flag': '🇮🇪'},
+            '354': {'name': 'Iceland', 'flag': '🇮🇸'},
+            '355': {'name': 'Albania', 'flag': '🇦🇱'},
+            '356': {'name': 'Malta', 'flag': '🇲🇹'},
+            '357': {'name': 'Cyprus', 'flag': '🇨🇾'},
+            '358': {'name': 'Finland', 'flag': '🇫🇮'},
+            '359': {'name': 'Bulgaria', 'flag': '🇧🇬'},
+            '370': {'name': 'Lithuania', 'flag': '🇱🇹'},
+            '371': {'name': 'Latvia', 'flag': '🇱🇻'},
+            '372': {'name': 'Estonia', 'flag': '🇪🇪'},
+            '373': {'name': 'Moldova', 'flag': '🇲🇩'},
+            '374': {'name': 'Armenia', 'flag': '🇦🇲'},
+            '375': {'name': 'Belarus', 'flag': '🇧🇾'},
+            '376': {'name': 'Andorra', 'flag': '🇦🇩'},
+            '377': {'name': 'Monaco', 'flag': '🇲🇨'},
+            '378': {'name': 'San Marino', 'flag': '🇸🇲'},
+            '380': {'name': 'Ukraine', 'flag': '🇺🇦'},
+            '381': {'name': 'Serbia', 'flag': '🇷🇸'},
+            '382': {'name': 'Montenegro', 'flag': '🇲🇪'},
+            '383': {'name': 'Kosovo', 'flag': '🇽🇰'},
+            '385': {'name': 'Croatia', 'flag': '🇭🇷'},
+            '386': {'name': 'Slovenia', 'flag': '🇸🇮'},
+            '387': {'name': 'Bosnia and Herzegovina', 'flag': '🇧🇦'},
+            '389': {'name': 'North Macedonia', 'flag': '🇲🇰'},
+            '420': {'name': 'Czech Republic', 'flag': '🇨🇿'},
+            '421': {'name': 'Slovakia', 'flag': '🇸🇰'},
+            '423': {'name': 'Liechtenstein', 'flag': '🇱🇮'},
+            '500': {'name': 'Falkland Islands', 'flag': '🇫🇰'},
+            '501': {'name': 'Belize', 'flag': '🇧🇿'},
+            '502': {'name': 'Guatemala', 'flag': '🇬🇹'},
+            '503': {'name': 'El Salvador', 'flag': '🇸🇻'},
+            '504': {'name': 'Honduras', 'flag': '🇭🇳'},
+            '505': {'name': 'Nicaragua', 'flag': '🇳🇮'},
+            '506': {'name': 'Costa Rica', 'flag': '🇨🇷'},
+            '507': {'name': 'Panama', 'flag': '🇵🇦'},
+            '508': {'name': 'Saint Pierre and Miquelon', 'flag': '🇵🇲'},
             '509': {'name': 'Haiti', 'flag': '🇭🇹'},
         }
         
-        # Clean the phone number
+        # Clean phone number
         cleaned_number = re.sub(r'[^\d]', '', phone_number)
         
-        # Try to match country codes (longest first)
+        # Find matching country code (longest match first)
         for code in sorted(country_codes.keys(), key=len, reverse=True):
             if cleaned_number.startswith(code):
                 return country_codes[code]
         
-        # Default fallback
         return {'name': 'Unknown', 'flag': '🌍'}
-
+    
     def extract_sms_data(self, row_data: list) -> Dict[str, Any]:
-        """Extract SMS data from table row"""
+        """Extract and format SMS data from table row"""
         try:
-            # Default structure
             sms_data = {
                 'time': 'Unknown',
                 'number': 'Unknown', 
@@ -713,18 +455,12 @@ class OTPTelegramBot:
                 'message': 'No message'
             }
             
-            # Extract from row data based on ACTUAL column mapping:
-            # Column 0: Date (Time)
-            # Column 1: Range (skip this)
-            # Column 2: Number 
-            # Column 3: CLI (Service)
-            # Column 4: SMS (Message)
+            # Column mapping: Date, Range, Number, CLI, SMS
             if len(row_data) >= 5:
-                # Map data from table columns according to actual headers
-                sms_data['time'] = row_data[0].strip() if row_data[0] else 'Unknown'     # Date
-                sms_data['number'] = row_data[2].strip() if row_data[2] else 'Unknown'   # Number (Column 2)
-                sms_data['service'] = row_data[3].strip() if row_data[3] else 'Unknown'  # CLI (Column 3)
-                sms_data['message'] = row_data[4].strip() if row_data[4] else 'No message' # SMS (Column 4)
+                sms_data['time'] = row_data[0].strip() if row_data[0] else 'Unknown'
+                sms_data['number'] = row_data[2].strip() if row_data[2] else 'Unknown'
+                sms_data['service'] = row_data[3].strip() if row_data[3] else 'Unknown'
+                sms_data['message'] = row_data[4].strip() if row_data[4] else 'No message'
                 
                 # Get country info from phone number
                 if sms_data['number'] != 'Unknown':
@@ -732,16 +468,16 @@ class OTPTelegramBot:
                     sms_data['country'] = country_info['name']
                     sms_data['country_flag'] = country_info['flag']
                 
-                # Extract OTP code from message (improved patterns for various formats)
+                # Extract OTP code from message
                 otp_patterns = [
-                    r'code[:\s]*(\d{2,3}[-\s]\d{2,3})',          # 123-456 or 123 456
-                    r'otp[:\s]*(\d{2,3}[-\s]\d{2,3})',           # OTP: 123-456
-                    r'verification[:\s]*(\d{2,3}[-\s]\d{2,3})',  # verification: 123-456
-                    r'code[:\s]*(\d{3,8})',                      # code: 123456
-                    r'otp[:\s]*(\d{3,8})',                       # otp: 123456
-                    r'verification[:\s]*(\d{3,8})',              # verification: 123456
-                    r'(\d{2,3}[-\s]\d{2,3})',                    # any 123-456 pattern
-                    r'\b(\d{4,8})\b'                             # any 4-8 digit number
+                    r'code[:\s]*(\d{2,3}[-\s]\d{2,3})',
+                    r'otp[:\s]*(\d{2,3}[-\s]\d{2,3})',
+                    r'verification[:\s]*(\d{2,3}[-\s]\d{2,3})',
+                    r'code[:\s]*(\d{3,8})',
+                    r'otp[:\s]*(\d{3,8})',
+                    r'verification[:\s]*(\d{3,8})',
+                    r'(\d{2,3}[-\s]\d{2,3})',
+                    r'\b(\d{4,8})\b'
                 ]
                 
                 for pattern in otp_patterns:
@@ -757,32 +493,30 @@ class OTPTelegramBot:
             return None
     
     def escape_markdown_v2(self, text: str) -> str:
-        """Escape special characters for MarkdownV2"""
-        # Characters that need escaping in MarkdownV2
+        """Escape special characters for Telegram MarkdownV2"""
         special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
         for char in special_chars:
             text = text.replace(char, f'\\{char}')
         return text
-
+    
     def format_message(self, sms_data: Dict[str, Any]) -> str:
-        """Format SMS message according to specified template with clickable OTP"""
+        """Format SMS data into Telegram message"""
         try:
             country_name = sms_data.get('country', 'Unknown')
             country_flag = sms_data.get('country_flag', '🌍')
             service = sms_data.get('service', 'Unknown')
             otp_code = sms_data.get('otp_code', 'Unknown')
             
-            # Escape special characters for Telegram
+            # Escape special characters for MarkdownV2
             safe_time = self.escape_markdown_v2(sms_data.get('time', 'Unknown'))
             safe_number = self.escape_markdown_v2(sms_data.get('number', 'Unknown'))
             safe_country = self.escape_markdown_v2(country_name)
             safe_service = self.escape_markdown_v2(service)
-            safe_message = sms_data.get('message', 'No message')  # Keep raw for code block
+            safe_message = sms_data.get('message', 'No message')
             
-            # Make OTP clickable for easy copying (proper format for Telegram)
+            # Make OTP clickable
             clickable_otp = f"`{otp_code}`" if otp_code != 'Unknown' else 'Unknown'
             
-            # Format message with proper markdown for Telegram
             message = f"""🔔{safe_country} {country_flag} {safe_service} Otp Code Received Successfully\\.
 
 ⏰Time: {safe_time}
@@ -804,21 +538,37 @@ Powered by @tasktreasur\\_support"""
             return "Error formatting message"
     
     def get_message_hash(self, message: str) -> str:
-        """Create a hash for message to prevent duplicates"""
-        import hashlib
-        return hashlib.md5(message.encode('utf-8')).hexdigest()
+        """Generate hash for message to prevent duplicates"""
+        return hashlib.md5(message.encode()).hexdigest()
+    
+    async def test_telegram_connection(self):
+        """Test Telegram bot connection"""
+        try:
+            bot_info = await self.bot.get_me()
+            logger.info(f"Bot info: {bot_info.first_name} (@{bot_info.username})")
+            
+            await self.bot.send_message(
+                chat_id=self.channel_id,
+                text="🤖 OTP Bot started successfully!",
+                connect_timeout=30,
+                read_timeout=30,
+                write_timeout=30
+            )
+            logger.info("Telegram connection test successful")
+            return True
+        except Exception as e:
+            logger.error(f"Telegram connection test failed: {e}")
+            return False
     
     async def send_to_telegram(self, message: str) -> bool:
         """Send message to Telegram channel"""
         try:
             message_hash = self.get_message_hash(message)
-            
-            # Check if message was already sent
             if message_hash in self.sent_messages:
                 logger.info("Message already sent, skipping duplicate")
                 return False
             
-            # Send message with proper markdown parsing
+            # Try MarkdownV2 first, then fallback
             try:
                 await self.bot.send_message(
                     chat_id=self.channel_id,
@@ -840,7 +590,6 @@ Powered by @tasktreasur\\_support"""
                         write_timeout=30
                     )
                 except Exception as markdown_error:
-                    # If all parsing fails, send as plain text
                     logger.warning(f"All markdown parsing failed, sending as plain text: {markdown_error}")
                     await self.bot.send_message(
                         chat_id=self.channel_id,
@@ -850,7 +599,6 @@ Powered by @tasktreasur\\_support"""
                         write_timeout=30
                     )
             
-            # Mark message as sent
             self.sent_messages.add(message_hash)
             logger.info("Message sent to Telegram successfully")
             return True
@@ -859,75 +607,50 @@ Powered by @tasktreasur\\_support"""
             logger.error(f"Error sending to Telegram: {e}")
             return False
     
-    def check_for_new_messages(self) -> list:
-        """Check website for new SMS messages using proper table structure"""
+    async def check_for_new_messages(self) -> list:
+        """Check for new SMS messages on the website"""
         try:
-            self.driver.get(self.sms_url)
+            # Navigate to SMS page (this acts as refresh)
+            await self.page.goto(self.sms_url, wait_until='networkidle', timeout=30000)
             
-            # Wait for page to load
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.TAG_NAME, "body"))
-            )
+            # Wait for table to load
+            await asyncio.sleep(3)
             
-            # Find table headers first to understand structure
-            # Expected order: Date, Number, CLI, SMS
-            try:
-                # Look for headers by text content in the correct order
-                date_header = self.driver.find_element(By.XPATH, "//th[contains(text(), 'Date')]")
-                number_header = self.driver.find_element(By.XPATH, "//th[contains(text(), 'Number')]") 
-                cli_header = self.driver.find_element(By.XPATH, "//th[contains(text(), 'CLI')]")
-                sms_header = self.driver.find_element(By.XPATH, "//th[contains(text(), 'SMS')]")
-                
-                logger.info("Found table headers - parsing table structure")
-                
-                # Get the table containing these headers
-                table = date_header.find_element(By.XPATH, "./ancestor::table")
-                
-                # Get all rows from the table body
-                rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
-                
-                messages = []
-                for row in rows:
-                    try:
-                        cells = row.find_elements(By.TAG_NAME, "td")
-                        if len(cells) >= 3:  # Make sure we have enough columns
-                            row_data = []
-                            for cell in cells:
-                                cell_text = cell.text.strip()
-                                row_data.append(cell_text)
-                            
-                            # Check if this row contains SMS data
-                            row_text = ' '.join(row_data).lower()
-                            if any(keyword in row_text for keyword in ['whatsapp', 'code', 'verification', 'sms', 'otp']) and len(row_data[0]) > 0:
-                                messages.append(row_data)
-                                logger.info(f"Found SMS row: {row_data[:3]}...")  # Log first 3 columns
-                    
-                    except Exception as row_error:
-                        logger.warning(f"Error processing table row: {row_error}")
-                        continue
-                
-                logger.info(f"Found {len(messages)} SMS messages from table")
-                return messages
-                
-            except Exception as table_error:
-                logger.warning(f"Could not find table structure: {table_error}")
-                
-                # Fallback to original method
-                page_source = self.driver.page_source
-                soup = BeautifulSoup(page_source, 'html.parser')
-                
-                messages = []
-                rows = soup.find_all('tr')
-                for row in rows:
-                    cells = row.find_all(['td', 'th'])
-                    if len(cells) > 2:
-                        row_data = [cell.get_text(strip=True) for cell in cells]
+            # Look for table with headers
+            table = await self.page.query_selector('table')
+            if not table:
+                logger.warning("No table found on SMS page")
+                return []
+            
+            # Get all table rows
+            rows = await table.query_selector_all('tbody tr')
+            if not rows:
+                logger.warning("No table rows found")
+                return []
+            
+            messages = []
+            for row in rows:
+                try:
+                    # Get all cells in the row
+                    cells = await row.query_selector_all('td')
+                    if len(cells) >= 5:
+                        row_data = []
+                        for cell in cells:
+                            cell_text = await cell.inner_text()
+                            row_data.append(cell_text.strip())
+                        
+                        # Check if row contains SMS-related keywords
                         row_text = ' '.join(row_data).lower()
-                        if any(keyword in row_text for keyword in ['whatsapp', 'code', 'verification']):
+                        if any(keyword in row_text for keyword in ['whatsapp', 'code', 'verification', 'sms', 'otp']) and len(row_data[0]) > 0:
                             messages.append(row_data)
-                
-                logger.info(f"Found {len(messages)} messages using fallback method")
-                return messages
+                            logger.info(f"Found SMS row: {row_data[:5]}...")
+                            
+                except Exception as row_error:
+                    logger.warning(f"Error processing table row: {row_error}")
+                    continue
+            
+            logger.info(f"Found {len(messages)} SMS messages from table")
+            return messages
             
         except Exception as e:
             logger.error(f"Error checking for messages: {e}")
@@ -935,14 +658,21 @@ Powered by @tasktreasur\\_support"""
     
     async def run_monitoring_loop(self):
         """Main monitoring loop"""
-        logger.info("Starting OTP monitoring bot...")
-        
         try:
-            # Setup driver
-            self.setup_driver()
+            logger.info("Starting OTP monitoring bot...")
+            
+            # Setup browser
+            if not await self.setup_browser():
+                logger.error("Failed to setup browser")
+                return
+            
+            # Test Telegram connection
+            if not await self.test_telegram_connection():
+                logger.error("Failed to connect to Telegram")
+                return
             
             # Login to website
-            if not self.login_to_website():
+            if not await self.login_to_website():
                 logger.error("Failed to login to website")
                 return
             
@@ -950,77 +680,36 @@ Powered by @tasktreasur\\_support"""
             
             while True:
                 try:
-                    # Step 1: Check for new messages
                     logger.info("📋 Checking for new SMS messages...")
-                    messages = self.check_for_new_messages()
                     
-                    # Step 2: Process any found messages
+                    # Check for new messages
+                    messages = await self.check_for_new_messages()
+                    
+                    # Process each message
                     for row_data in messages:
-                        # Extract SMS data from table row
                         sms_data = self.extract_sms_data(row_data)
-                        
                         if sms_data:
-                            # Format message
                             formatted_message = self.format_message(sms_data)
-                            
-                            # Send to Telegram
                             sent = await self.send_to_telegram(formatted_message)
                             if sent:
                                 logger.info(f"✅ New OTP sent: {sms_data.get('country', 'Unknown')} - {sms_data.get('otp_code', 'Unknown')}")
                     
-                    # Step 3: Refresh page for next check (no waiting)
                     logger.info("🔄 Refreshing page for next check...")
-                    # The page refresh happens in check_for_new_messages() when it loads the URL
                     
                 except Exception as e:
                     logger.error(f"❌ Error in monitoring loop: {e}")
-                    # Brief pause on error to prevent rapid cycling
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(2)  # Brief pause on error
                     
-        except KeyboardInterrupt:
-            logger.info("Bot stopped by user")
         except Exception as e:
             logger.error(f"Fatal error: {e}")
         finally:
-            if self.driver:
-                self.driver.quit()
-    
-    async def test_telegram_connection(self):
-        """Test Telegram bot connection"""
-        try:
-            # First try to get bot info
-            bot_info = await self.bot.get_me()
-            logger.info(f"Bot info: {bot_info.first_name} (@{bot_info.username})")
-            
-            # Then try to send a test message
-            await self.bot.send_message(
-                chat_id=self.channel_id,
-                text="🤖 OTP Bot started successfully!",
-                connect_timeout=30,
-                read_timeout=30,
-                write_timeout=30
-            )
-            logger.info("Telegram connection test successful")
-            return True
-        except Exception as e:
-            logger.error(f"Telegram connection test failed: {e}")
-            return False
+            # Cleanup
+            if self.browser:
+                await self.browser.close()
 
-def main():
-    """Main function to run the bot"""
+async def main():
     bot = OTPTelegramBot()
-    
-    async def run_bot():
-        # Test Telegram connection first
-        if not await bot.test_telegram_connection():
-            logger.error("Failed to connect to Telegram. Please check bot token and channel ID.")
-            return
-        
-        # Start monitoring
-        await bot.run_monitoring_loop()
-    
-    # Run the bot
-    asyncio.run(run_bot())
+    await bot.run_monitoring_loop()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
