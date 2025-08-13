@@ -2,7 +2,7 @@ services:
   - type: web
     name: otp-telegram-bot
     env: python
-    buildCommand: pip install -r requirements.txt && python install_browsers.py
+    buildCommand: pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium
     startCommand: python run_bot.py
     plan: free
     region: oregon

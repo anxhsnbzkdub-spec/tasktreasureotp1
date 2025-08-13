@@ -15,32 +15,52 @@ def install_browsers():
     try:
         logger.info("Installing Playwright browsers...")
         
-        # Install chromium browser
+        # Install all browsers first
+        logger.info("Running: playwright install")
         result = subprocess.run([
-            sys.executable, "-m", "playwright", "install", "chromium"
-        ], capture_output=True, text=True, timeout=300)
+            sys.executable, "-m", "playwright", "install"
+        ], capture_output=True, text=True, timeout=600)
         
-        if result.returncode == 0:
-            logger.info("Playwright chromium browser installed successfully")
-            logger.info(result.stdout)
-        else:
-            logger.error(f"Failed to install Playwright browsers: {result.stderr}")
-            return False
+        logger.info(f"Playwright install stdout: {result.stdout}")
+        if result.stderr:
+            logger.warning(f"Playwright install stderr: {result.stderr}")
+        
+        if result.returncode != 0:
+            logger.error(f"Failed to install all browsers, trying chromium only...")
             
+            # Fallback: Install chromium only
+            result = subprocess.run([
+                sys.executable, "-m", "playwright", "install", "chromium"
+            ], capture_output=True, text=True, timeout=300)
+            
+            logger.info(f"Chromium install stdout: {result.stdout}")
+            if result.stderr:
+                logger.warning(f"Chromium install stderr: {result.stderr}")
+                
+            if result.returncode != 0:
+                logger.error("Failed to install chromium browser")
+                return False
+        
+        logger.info("Browser installation completed")
+        
         # Install system dependencies
+        logger.info("Installing system dependencies...")
         result = subprocess.run([
-            sys.executable, "-m", "playwright", "install-deps", "chromium"
+            sys.executable, "-m", "playwright", "install-deps"
         ], capture_output=True, text=True, timeout=300)
         
-        if result.returncode == 0:
-            logger.info("Playwright system dependencies installed successfully")
-            logger.info(result.stdout)
-        else:
-            logger.warning(f"System dependencies installation had issues: {result.stderr}")
-            # Continue anyway as this might work
+        logger.info(f"Install-deps stdout: {result.stdout}")
+        if result.stderr:
+            logger.warning(f"Install-deps stderr: {result.stderr}")
+        
+        if result.returncode != 0:
+            logger.warning("System dependencies installation had issues, but continuing...")
             
         return True
         
+    except subprocess.TimeoutExpired:
+        logger.error("Browser installation timed out")
+        return False
     except Exception as e:
         logger.error(f"Error installing Playwright browsers: {e}")
         return False

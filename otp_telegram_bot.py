@@ -54,28 +54,105 @@ class OTPTelegramBot:
         self.browser = None
         self.page = None
         
+    async def ensure_browsers_installed(self):
+        """Ensure Playwright browsers are installed"""
+        try:
+            logger.info("Checking if Playwright browsers are installed...")
+            
+            # Try to start playwright and check if chromium is available
+            playwright = await async_playwright().start()
+            
+            try:
+                # Try to launch chromium to check if it's installed
+                test_browser = await playwright.chromium.launch(headless=True)
+                await test_browser.close()
+                logger.info("Playwright browsers are already installed")
+                await playwright.stop()
+                return True
+            except Exception as browser_error:
+                logger.warning(f"Browser not available: {browser_error}")
+                await playwright.stop()
+                
+                # Install browsers
+                logger.info("Installing Playwright browsers...")
+                import subprocess
+                import sys
+                
+                result = subprocess.run([
+                    sys.executable, "-m", "playwright", "install", "chromium"
+                ], capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    logger.info("Playwright chromium installed successfully")
+                    return True
+                else:
+                    logger.error(f"Failed to install browsers: {result.stderr}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Error ensuring browsers installed: {e}")
+            return False
+    
     async def setup_browser(self):
         """Setup Playwright browser with appropriate options"""
         logger.info("Setting up Playwright browser...")
         
+        # Ensure browsers are installed first
+        if not await self.ensure_browsers_installed():
+            logger.error("Failed to ensure browsers are installed")
+            return False
+        
         playwright = await async_playwright().start()
         
         # Launch browser with options
-        self.browser = await playwright.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-gpu',
-                '--disable-web-security',
-                '--allow-running-insecure-content',
-                '--ignore-certificate-errors',
-                '--ignore-ssl-errors',
-                '--ignore-certificate-errors-spki-list',
-                '--ignore-certificate-errors-invalid-ca',
-                '--disable-setuid-sandbox',
-            ]
-        )
+        try:
+            self.browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--allow-running-insecure-content',
+                    '--ignore-certificate-errors',
+                    '--ignore-ssl-errors',
+                    '--ignore-certificate-errors-spki-list',
+                    '--ignore-certificate-errors-invalid-ca',
+                    '--disable-setuid-sandbox',
+                ]
+            )
+        except Exception as launch_error:
+            logger.error(f"Failed to launch browser: {launch_error}")
+            logger.info("Trying to install browsers again...")
+            
+            # Last resort: try to install browsers again
+            import subprocess
+            import sys
+            
+            result = subprocess.run([
+                sys.executable, "-m", "playwright", "install", "chromium"
+            ], capture_output=True, text=True, timeout=300)
+            
+            if result.returncode == 0:
+                logger.info("Browsers reinstalled, trying launch again...")
+                self.browser = await playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-gpu',
+                        '--disable-web-security',
+                        '--allow-running-insecure-content',
+                        '--ignore-certificate-errors',
+                        '--ignore-ssl-errors',
+                        '--ignore-certificate-errors-spki-list',
+                        '--ignore-certificate-errors-invalid-ca',
+                        '--disable-setuid-sandbox',
+                    ]
+                )
+            else:
+                logger.error("Failed to reinstall browsers")
+                return False
         
         # Create new page
         self.page = await self.browser.new_page()
