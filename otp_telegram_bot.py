@@ -51,6 +51,7 @@ class OTPTelegramBot:
         self.sent_messages: Set[str] = set()
         
         # Playwright browser and page
+        self.playwright = None
         self.browser = None
         self.page = None
         
@@ -60,18 +61,16 @@ class OTPTelegramBot:
             logger.info("Checking if Playwright browsers are installed...")
             
             # Try to start playwright and check if chromium is available
-            playwright = await async_playwright().start()
+            test_playwright = await async_playwright().start()
             
             try:
                 # Try to launch chromium to check if it's installed
-                test_browser = await playwright.chromium.launch(headless=True)
+                test_browser = await test_playwright.chromium.launch(headless=True)
                 await test_browser.close()
                 logger.info("Playwright browsers are already installed")
-                await playwright.stop()
                 return True
             except Exception as browser_error:
                 logger.warning(f"Browser not available: {browser_error}")
-                await playwright.stop()
                 
                 # Install browsers
                 logger.info("Installing Playwright browsers...")
@@ -88,6 +87,8 @@ class OTPTelegramBot:
                 else:
                     logger.error(f"Failed to install browsers: {result.stderr}")
                     return False
+            finally:
+                await test_playwright.stop()
                     
         except Exception as e:
             logger.error(f"Error ensuring browsers installed: {e}")
@@ -102,11 +103,11 @@ class OTPTelegramBot:
             logger.error("Failed to ensure browsers are installed")
             return False
         
-        playwright = await async_playwright().start()
+        self.playwright = await async_playwright().start()
         
         # Launch browser with options
         try:
-            self.browser = await playwright.chromium.launch(
+            self.browser = await self.playwright.chromium.launch(
                 headless=True,
                 args=[
                     '--no-sandbox',
@@ -135,7 +136,7 @@ class OTPTelegramBot:
             
             if result.returncode == 0:
                 logger.info("Browsers reinstalled, trying launch again...")
-                self.browser = await playwright.chromium.launch(
+                self.browser = await self.playwright.chromium.launch(
                     headless=True,
                     args=[
                         '--no-sandbox',
@@ -154,11 +155,10 @@ class OTPTelegramBot:
                 logger.error("Failed to reinstall browsers")
                 return False
         
-        # Create new page
-        self.page = await self.browser.new_page()
-        
-        # Set user agent
-        await self.page.set_user_agent('Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36')
+        # Create new page with user agent
+        self.page = await self.browser.new_page(
+            user_agent='Mozilla/5.0 (Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        )
         
         logger.info("Playwright browser setup successful")
         return True
@@ -783,6 +783,8 @@ Powered by @tasktreasur\\_support"""
             # Cleanup
             if self.browser:
                 await self.browser.close()
+            if self.playwright:
+                await self.playwright.stop()
 
 async def main():
     bot = OTPTelegramBot()
