@@ -256,7 +256,7 @@ class OTPTelegramBot:
                 return False
             
             # Clear and fill username
-            await username_field.clear()
+            await username_field.click(click_count=3)  # Triple click to select all
             await username_field.fill(self.username)
             logger.info("Username entered successfully")
             
@@ -283,7 +283,7 @@ class OTPTelegramBot:
                 return False
             
             # Clear and fill password
-            await password_field.clear()
+            await password_field.click(click_count=3)  # Triple click to select all
             await password_field.fill(self.password)
             logger.info("Password entered successfully")
             
@@ -308,7 +308,7 @@ class OTPTelegramBot:
                         continue
                 
                 if captcha_field:
-                    await captcha_field.clear()
+                    await captcha_field.click(click_count=3)  # Triple click to select all
                     await captcha_field.fill(str(captcha_answer))
                     logger.info(f"Captcha solved and entered: {captcha_answer}")
                 else:
