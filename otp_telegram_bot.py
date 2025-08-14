@@ -20,6 +20,7 @@ import requests
 from playwright.async_api import async_playwright
 import telegram
 from telegram.constants import ParseMode
+from supabase import create_client, Client
 
 # Configure logging
 logging.basicConfig(
@@ -48,13 +49,66 @@ class OTPTelegramBot:
         # Initialize Telegram bot
         self.bot = telegram.Bot(token=self.bot_token)
         
-        # Store sent message hashes to prevent duplicates
-        self.sent_messages: Set[str] = set()
+        # Supabase configuration
+        self.supabase_url = "https://vwnjdhadkvfalbkmzwxv.supabase.co"
+        self.supabase_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ3bmpkaGFka3ZmYWxia216d3h2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTUxNjIyMzYsImV4cCI6MjA3MDczODIzNn0.kIPlTzktPdgzERVQbEi_kDOby0YLIDLXhVl_aUIupW0"
+        self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
         
         # Playwright browser and page
         self.playwright = None
         self.browser = None
         self.page = None
+        
+    async def init_database(self):
+        """Initialize the database table for storing processed message hashes"""
+        try:
+            logger.info("Initializing Supabase database...")
+            
+            # Create table if it doesn't exist
+            # This will be a simple table with just the message hash and timestamp
+            result = self.supabase.table('processed_messages').select('*').limit(1).execute()
+            logger.info("Database connection successful")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+            # We'll continue without database for fallback
+            return False
+    
+    async def is_message_processed(self, message_hash: str) -> bool:
+        """Check if a message hash has already been processed"""
+        try:
+            result = self.supabase.table('processed_messages').select('hash').eq('hash', message_hash).execute()
+            return len(result.data) > 0
+        except Exception as e:
+            logger.error(f"Error checking message hash in database: {e}")
+            # Fallback: assume not processed to avoid missing messages
+            return False
+    
+    async def mark_message_processed(self, message_hash: str) -> bool:
+        """Mark a message hash as processed in the database"""
+        try:
+            current_time = datetime.now().isoformat()
+            result = self.supabase.table('processed_messages').insert({
+                'hash': message_hash,
+                'processed_at': current_time
+            }).execute()
+            return True
+        except Exception as e:
+            logger.error(f"Error marking message as processed in database: {e}")
+            return False
+    
+    async def cleanup_old_hashes(self):
+        """Clean up old message hashes to prevent database bloat (keep last 30 days)"""
+        try:
+            from datetime import timedelta
+            cutoff_date = (datetime.now() - timedelta(days=30)).isoformat()
+            
+            result = self.supabase.table('processed_messages').delete().lt('processed_at', cutoff_date).execute()
+            if result.data:
+                logger.info(f"Cleaned up {len(result.data)} old message hashes")
+        except Exception as e:
+            logger.error(f"Error cleaning up old hashes: {e}")
         
     async def ensure_browsers_installed(self):
         """Ensure Playwright browsers are installed"""
@@ -642,7 +696,9 @@ Powered by @tasktreasur\\_support"""
         """Send message to Telegram channel"""
         try:
             message_hash = self.get_message_hash(message)
-            if message_hash in self.sent_messages:
+            
+            # Check if message was already processed using Supabase
+            if await self.is_message_processed(message_hash):
                 logger.info("Message already sent, skipping duplicate")
                 return False
             
@@ -677,7 +733,8 @@ Powered by @tasktreasur\\_support"""
                         write_timeout=30
                     )
             
-            self.sent_messages.add(message_hash)
+            # Mark message as processed in database
+            await self.mark_message_processed(message_hash)
             logger.info("Message sent to Telegram successfully")
             return True
             
@@ -739,6 +796,9 @@ Powered by @tasktreasur\\_support"""
         try:
             logger.info("Starting OTP monitoring bot...")
             
+            # Initialize database
+            await self.init_database()
+            
             # Setup browser
             if not await self.setup_browser():
                 logger.error("Failed to setup browser")
@@ -755,6 +815,9 @@ Powered by @tasktreasur\\_support"""
                 return
             
             logger.info("Starting continuous monitoring loop (check → refresh → repeat)...")
+            
+            # Counter for periodic cleanup
+            loop_count = 0
             
             while True:
                 try:
@@ -773,6 +836,12 @@ Powered by @tasktreasur\\_support"""
                                 logger.info(f"✅ New OTP sent: {sms_data.get('country', 'Unknown')} - {sms_data.get('otp_code', 'Unknown')}")
                     
                     logger.info("🔄 Refreshing page for next check...")
+                    
+                    # Periodic database cleanup (every 100 loops, roughly every few hours)
+                    loop_count += 1
+                    if loop_count % 100 == 0:
+                        logger.info("🧹 Performing periodic database cleanup...")
+                        await self.cleanup_old_hashes()
                     
                 except Exception as e:
                     logger.error(f"❌ Error in monitoring loop: {e}")

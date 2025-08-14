@@ -1,0 +1,9 @@
+2025-08-14 04:36:27,461 - otp_telegram_bot - INFO - Initializing Supabase database...
+2025-08-14 04:36:28,578 - httpx - INFO - HTTP Request: GET https://vwnjdhadkvfalbkmzwxv.supabase.co/rest/v1/processed_messages?select=%2A&limit=1 "HTTP/1.1 404 Not Found"
+2025-08-14 04:36:28,588 - otp_telegram_bot - ERROR - Database initialization error: {'code': 'PGRST205', 'details': None, 'hint': None, 'message': "Could not find the table 'public.processed_messages' in the schema cache"}
+2025-08-14 04:36:28,796 - httpx - INFO - HTTP Request: GET https://vwnjdhadkvfalbkmzwxv.supabase.co/rest/v1/processed_messages?select=hash&hash=eq.test_hash_123 "HTTP/1.1 404 Not Found"
+2025-08-14 04:36:28,865 - otp_telegram_bot - ERROR - Error checking message hash in database: {'code': 'PGRST205', 'details': None, 'hint': None, 'message': "Could not find the table 'public.processed_messages' in the schema cache"}
+2025-08-14 04:36:29,411 - httpx - INFO - HTTP Request: POST https://vwnjdhadkvfalbkmzwxv.supabase.co/rest/v1/processed_messages "HTTP/1.1 404 Not Found"
+2025-08-14 04:36:29,412 - otp_telegram_bot - ERROR - Error marking message as processed in database: {'code': 'PGRST205', 'details': None, 'hint': None, 'message': "Could not find the table 'public.processed_messages' in the schema cache"}
+2025-08-14 04:36:29,962 - httpx - INFO - HTTP Request: GET https://vwnjdhadkvfalbkmzwxv.supabase.co/rest/v1/processed_messages?select=hash&hash=eq.test_hash_123 "HTTP/1.1 404 Not Found"
+2025-08-14 04:36:30,016 - otp_telegram_bot - ERROR - Error checking message hash in database: {'code': 'PGRST205', 'details': None, 'hint': None, 'message': "Could not find the table 'public.processed_messages' in the schema cache"}
